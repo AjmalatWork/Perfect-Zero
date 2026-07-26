@@ -1,0 +1,13 @@
+[gd_scene format=3 uid="uid://cbl563cpcsy5p"]
+
+[ext_resource type="Script" uid="uid://dtwbnabstjwgq" path="res://scripts/gameplay/test_harness.gd" id="1_xx0yn"]
+[ext_resource type="PackedScene" uid="uid://cw7reamvswdax" path="res://scenes/TimerSlot.tscn" id="2_sajm1"]
+
+[node name="TestHarness" type="Node2D" unique_id=1063379079]
+script = ExtResource("1_xx0yn")
+
+[node name="TimerSlot" parent="." unique_id=674047786 instance=ExtResource("2_sajm1")]
+offset_left = 209.0
+offset_top = 53.0
+offset_right = 477.0
+offset_bottom = 313.0

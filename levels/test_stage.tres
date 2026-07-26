@@ -1,0 +1,31 @@
+[gd_resource type="Resource" script_class="StageData" format=3 uid="uid://ccolvhpxs0eca"]
+
+[ext_resource type="Script" uid="uid://bkq7siep0hkjh" path="res://scripts/data/StageData.gd" id="1_52gc5"]
+[ext_resource type="Script" uid="uid://diaiectjrllp1" path="res://scripts/data/TimerData.gd" id="2_1ejxv"]
+
+[sub_resource type="Resource" id="Resource_gm2ic"]
+script = ExtResource("2_1ejxv")
+start_time = 5.0
+metadata/_custom_type_script = "uid://diaiectjrllp1"
+
+[sub_resource type="Resource" id="Resource_s7rlf"]
+script = ExtResource("2_1ejxv")
+start_time = 7.0
+timer_type = 1
+metadata/_custom_type_script = "uid://diaiectjrllp1"
+
+[sub_resource type="Resource" id="Resource_0cvp5"]
+script = ExtResource("2_1ejxv")
+start_time = 9.0
+timer_type = 2
+metadata/_custom_type_script = "uid://diaiectjrllp1"
+
+[sub_resource type="Resource" id="Resource_qpvh6"]
+script = ExtResource("2_1ejxv")
+timer_type = 3
+metadata/_custom_type_script = "uid://diaiectjrllp1"
+
+[resource]
+script = ExtResource("1_52gc5")
+timers = Array[ExtResource("2_1ejxv")]([SubResource("Resource_gm2ic"), SubResource("Resource_s7rlf"), SubResource("Resource_0cvp5"), SubResource("Resource_qpvh6")])
+metadata/_custom_type_script = "uid://bkq7siep0hkjh"

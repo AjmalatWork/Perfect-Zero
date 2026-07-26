@@ -1,0 +1,83 @@
+extends Control
+class_name LevelSelect
+
+const NORMAL_ACCENT := Color("22d3ff")  # cyan, matches BLUE timer family
+const BONUS_ACCENT := Color("ffd23f")   # gold, matches the GOLDEN timer color
+const LOCKED_ACCENT := Color("8b90a8")  # muted grey
+
+@export var campaign: Campaign
+@export var campaign_navigator: CampaignNavigator
+
+@onready var grid: GridContainer = $Center/Grid
+
+func _ready() -> void:
+	grid.add_theme_constant_override("h_separation", 24)
+	grid.add_theme_constant_override("v_separation", 24)
+	GameManager.state_changed.connect(_on_state_changed)
+	_add_back_button()
+
+func _add_back_button() -> void:
+	var back := Button.new()
+	back.text = "BACK"
+	back.custom_minimum_size = Vector2(160, 56)
+	back.position = Vector2(40, 40)
+	_style_button(back, LOCKED_ACCENT)
+	back.pressed.connect(func(): GameManager.set_state(GameManager.GameState.MENU))
+	PressFeedback.apply(back)
+	add_child(back)
+
+func _on_state_changed(new_state: int) -> void:
+	# Rebuild each time the screen is shown so unlock progress is always current.
+	if new_state == GameManager.GameState.LEVEL_SELECT:
+		_populate()
+
+func _populate() -> void:
+	for child in grid.get_children():
+		child.queue_free()
+	if campaign == null:
+		push_error("LevelSelect: no campaign assigned.")
+		return
+
+	var highest: int = SaveManager.load_high_score("highest_stage_reached")
+	for i in range(campaign.stages.size()):
+		var stage: StageData = campaign.stages[i]
+		var button := Button.new()
+		button.text = stage.stage_name
+		button.custom_minimum_size = Vector2(220, 120)
+
+		var locked: bool = i > highest
+		if locked:
+			button.disabled = true
+			button.modulate = Color(1, 1, 1, 0.45)
+			_style_button(button, LOCKED_ACCENT)
+		else:
+			var accent: Color = BONUS_ACCENT if stage.is_bonus_stage else NORMAL_ACCENT
+			_style_button(button, accent)
+			var index := i  # fresh binding so the lambda captures this stage's index
+			button.pressed.connect(func(): campaign_navigator.enter_campaign(index))
+			PressFeedback.apply(button)
+
+		grid.add_child(button)
+
+func _style_button(button: Button, accent: Color) -> void:
+	button.add_theme_font_size_override("font_size", 26)
+	button.add_theme_color_override("font_color", Color.WHITE)
+	button.add_theme_color_override("font_outline_color", accent)
+	button.add_theme_constant_override("outline_size", 5)
+	button.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.7))
+	button.add_theme_stylebox_override("normal", _make_box(accent, 0.85, 0.35, 8))
+	button.add_theme_stylebox_override("hover", _make_box(accent, 0.7, 0.5, 12))
+	button.add_theme_stylebox_override("pressed", _make_box(accent, 0.6, 0.4, 6))
+	button.add_theme_stylebox_override("disabled", _make_box(accent, 0.9, 0.15, 4))
+
+func _make_box(accent: Color, darken: float, shadow_alpha: float, shadow_size: int) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = accent.darkened(darken)
+	sb.set_corner_radius_all(12)
+	sb.set_border_width_all(3)
+	sb.border_color = accent
+	sb.set_content_margin_all(10)
+	sb.shadow_color = Color(accent.r, accent.g, accent.b, shadow_alpha)
+	sb.shadow_size = shadow_size
+	sb.shadow_offset = Vector2.ZERO
+	return sb

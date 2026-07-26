@@ -1,0 +1,174 @@
+[gd_scene format=3 uid="uid://clurv1c27t1al"]
+
+[ext_resource type="Script" uid="uid://c3q7kps6bequj" path="res://scripts/gameplay/StageController.gd" id="1_0bbpv"]
+[ext_resource type="PackedScene" uid="uid://cndksqmkf2tel" path="res://scenes/HUD.tscn" id="1_rarhs"]
+[ext_resource type="Resource" uid="uid://ccolvhpxs0eca" path="res://levels/test_stage.tres" id="2_rarhs"]
+[ext_resource type="PackedScene" uid="uid://cw7reamvswdax" path="res://scenes/TimerSlot.tscn" id="3_vcsgt"]
+[ext_resource type="Script" uid="uid://dmewiwucna183" path="res://scripts/ui/MainScreenRouter.gd" id="4_router"]
+[ext_resource type="Script" uid="uid://cwh72vlx1r8c5" path="res://scripts/gameplay/CampaignNavigator.gd" id="5_navigator"]
+[ext_resource type="Resource" uid="uid://dc0jqds6bv52f" path="res://data/Campaign.tres" id="6_campaign"]
+[ext_resource type="PackedScene" path="res://scenes/TitleScreen.tscn" id="7_title"]
+[ext_resource type="PackedScene" path="res://scenes/LevelSelect.tscn" id="8_select"]
+[ext_resource type="PackedScene" path="res://scenes/StageResultScreen.tscn" id="9_result"]
+[ext_resource type="Script" uid="uid://cqd1j23pjjhi6" path="res://scripts/gameplay/TutorialManager.gd" id="10_tut"]
+[ext_resource type="PackedScene" path="res://scenes/HelpScreen.tscn" id="11_help"]
+[ext_resource type="PackedScene" path="res://scenes/ScoresScreen.tscn" id="12_scores"]
+[ext_resource type="Script" uid="uid://bb0t0y2fn1bu1" path="res://scripts/gameplay/EndlessRunner.gd" id="13_erun"]
+[ext_resource type="PackedScene" path="res://scenes/EndlessModeSelect.tscn" id="14_emsel"]
+[ext_resource type="PackedScene" path="res://scenes/EndlessHUD.tscn" id="15_ehud"]
+[ext_resource type="PackedScene" path="res://scenes/EndlessEndScreen.tscn" id="16_eend"]
+[ext_resource type="PackedScene" path="res://scenes/OptionsPanel.tscn" id="17_opts"]
+[ext_resource type="PackedScene" path="res://scenes/PauseMenu.tscn" id="18_pause"]
+[ext_resource type="Script" uid="uid://bdnpqn3qjd8q1" path="res://scripts/data/TimerUnlock.gd" id="19_tunlock"]
+[ext_resource type="Script" uid="uid://drnutl3kjeod" path="res://scripts/ui/PowerupBar.gd" id="20_pwbar"]
+
+[sub_resource type="Resource" id="TimerUnlock_normal"]
+script = ExtResource("19_tunlock")
+weight = 72.0
+
+[sub_resource type="Resource" id="TimerUnlock_red"]
+script = ExtResource("19_tunlock")
+time = 10.0
+type = 1
+weight = 10.0
+
+[sub_resource type="Resource" id="TimerUnlock_blue"]
+script = ExtResource("19_tunlock")
+time = 15.0
+type = 2
+weight = 10.0
+
+[sub_resource type="Resource" id="TimerUnlock_golden"]
+script = ExtResource("19_tunlock")
+time = 20.0
+type = 3
+weight = 5.0
+
+[sub_resource type="Resource" id="TimerUnlock_blackout"]
+script = ExtResource("19_tunlock")
+time = 30.0
+type = 4
+weight = 3.0
+
+[sub_resource type="Resource" id="TimerUnlock_decay"]
+script = ExtResource("19_tunlock")
+time = 40.0
+type = 5
+weight = 6.0
+
+[node name="Main" type="Node2D" unique_id=680670716 node_paths=PackedStringArray("title_screen", "level_select", "result_screen", "help_screen", "scores_screen", "options_panel", "endless_mode_select", "endless_game", "endless_end", "gameplay_nodes")]
+script = ExtResource("4_router")
+title_screen = NodePath("TitleScreen")
+level_select = NodePath("LevelSelect")
+result_screen = NodePath("StageResultScreen")
+help_screen = NodePath("HelpScreen")
+scores_screen = NodePath("ScoresScreen")
+options_panel = NodePath("OptionsPanel")
+endless_mode_select = NodePath("EndlessModeSelect")
+endless_game = NodePath("EndlessGame")
+endless_end = NodePath("EndlessEndScreen")
+gameplay_nodes = [NodePath("TimerContainer"), NodePath("Hud")]
+
+[node name="TimerContainer" type="CenterContainer" parent="." unique_id=1841903861]
+offset_right = 1600.0
+offset_bottom = 900.0
+
+[node name="TimerRows" type="VBoxContainer" parent="TimerContainer" unique_id=1841903862]
+layout_mode = 2
+theme_override_constants/separation = 32
+
+[node name="StageController" type="Node" parent="." unique_id=2047105993 node_paths=PackedStringArray("timer_container")]
+script = ExtResource("1_0bbpv")
+current_stage_data = ExtResource("2_rarhs")
+timer_container = NodePath("../TimerContainer/TimerRows")
+timer_slot_scene = ExtResource("3_vcsgt")
+
+[node name="Hud" parent="." unique_id=69231847 instance=ExtResource("1_rarhs")]
+
+[node name="TutorialManager" type="Node" parent="." unique_id=910025005]
+script = ExtResource("10_tut")
+
+[node name="CampaignNavigator" type="Node" parent="." unique_id=910025001 node_paths=PackedStringArray("stage_controller", "tutorial_manager")]
+script = ExtResource("5_navigator")
+campaign = ExtResource("6_campaign")
+stage_controller = NodePath("../StageController")
+tutorial_manager = NodePath("../TutorialManager")
+
+[node name="TitleScreen" parent="." unique_id=910025002 node_paths=PackedStringArray("campaign_navigator") instance=ExtResource("7_title")]
+campaign_navigator = NodePath("../CampaignNavigator")
+
+[node name="LevelSelect" parent="." unique_id=910025003 node_paths=PackedStringArray("campaign_navigator") instance=ExtResource("8_select")]
+campaign = ExtResource("6_campaign")
+campaign_navigator = NodePath("../CampaignNavigator")
+
+[node name="StageResultScreen" parent="." unique_id=910025004 node_paths=PackedStringArray("stage_controller", "campaign_navigator") instance=ExtResource("9_result")]
+stage_controller = NodePath("../StageController")
+campaign_navigator = NodePath("../CampaignNavigator")
+
+[node name="HelpScreen" parent="." unique_id=910025006 instance=ExtResource("11_help")]
+
+[node name="ScoresScreen" parent="." unique_id=910025007 instance=ExtResource("12_scores")]
+campaign = ExtResource("6_campaign")
+
+[node name="EndlessModeSelect" parent="." unique_id=910025008 node_paths=PackedStringArray("runner") instance=ExtResource("14_emsel")]
+runner = NodePath("../EndlessRunner")
+
+[node name="EndlessGame" type="Control" parent="." unique_id=910025009]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 1600.0
+offset_bottom = 900.0
+mouse_filter = 2
+
+[node name="EndlessGrid" type="CenterContainer" parent="EndlessGame" unique_id=910025010]
+layout_mode = 0
+offset_right = 1600.0
+offset_bottom = 900.0
+mouse_filter = 2
+
+[node name="EndlessGridContainer" type="GridContainer" parent="EndlessGame/EndlessGrid" unique_id=910025011]
+layout_mode = 2
+theme_override_constants/h_separation = 14
+theme_override_constants/v_separation = 14
+columns = 3
+
+[node name="EndlessHud" parent="EndlessGame" unique_id=910025012 instance=ExtResource("15_ehud")]
+layout_mode = 0
+
+[node name="PowerupBar" type="Control" parent="EndlessGame" unique_id=910025017]
+anchors_preset = 0
+offset_right = 1600.0
+offset_bottom = 900.0
+mouse_filter = 2
+script = ExtResource("20_pwbar")
+
+[node name="EndlessRunner" type="Node" parent="." unique_id=910025013 node_paths=PackedStringArray("grid_container", "endless_hud")]
+script = ExtResource("13_erun")
+grid_container = NodePath("../EndlessGame/EndlessGrid/EndlessGridContainer")
+timer_slot_scene = ExtResource("3_vcsgt")
+endless_hud = NodePath("../EndlessGame/EndlessHud")
+fallback_spawn_interval = 2.0
+max_timers_ramp_time = 90.0
+value_high_start = 7.0
+value_low_start = 5.0
+value_high_floor = 3.0
+value_low_floor = 1.0
+value_ramp_time = 60.0
+min_zero_gap = 1.5
+max_red_active = 2
+max_blue_active = 1
+max_golden_active = 9
+max_blackout_active = 1
+max_decay_active = 2
+colored_pity_window = 10.0
+type_unlocks = Array[ExtResource("19_tunlock")]([SubResource("TimerUnlock_normal"), SubResource("TimerUnlock_red"), SubResource("TimerUnlock_blue"), SubResource("TimerUnlock_golden"), SubResource("TimerUnlock_blackout"), SubResource("TimerUnlock_decay")])
+
+[node name="EndlessEndScreen" parent="." unique_id=910025014 node_paths=PackedStringArray("runner") instance=ExtResource("16_eend")]
+runner = NodePath("../EndlessRunner")
+
+[node name="OptionsPanel" parent="." unique_id=910025015 instance=ExtResource("17_opts")]
+standalone = true
+
+[node name="PauseMenu" parent="." unique_id=910025016 node_paths=PackedStringArray("campaign_navigator", "endless_runner") instance=ExtResource("18_pause")]
+campaign_navigator = NodePath("../CampaignNavigator")
+endless_runner = NodePath("../EndlessRunner")

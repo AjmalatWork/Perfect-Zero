@@ -1,0 +1,32 @@
+[gd_resource type="Resource" script_class="StageData" format=3 uid="uid://rew3205tttbt"]
+
+[ext_resource type="Script" uid="uid://bkq7siep0hkjh" path="res://scripts/data/StageData.gd" id="1_dfj23"]
+[ext_resource type="Script" uid="uid://diaiectjrllp1" path="res://scripts/data/TimerData.gd" id="2_njvq3"]
+
+[sub_resource type="Resource" id="Resource_decay9"]
+script = ExtResource("2_njvq3")
+start_time = 5.0
+timer_type = 5
+metadata/_custom_type_script = "uid://diaiectjrllp1"
+
+[sub_resource type="Resource" id="Resource_0vjaj"]
+script = ExtResource("2_njvq3")
+timer_type = 4
+metadata/_custom_type_script = "uid://diaiectjrllp1"
+
+[sub_resource type="Resource" id="Resource_o812j"]
+script = ExtResource("2_njvq3")
+start_time = 5.0
+metadata/_custom_type_script = "uid://diaiectjrllp1"
+
+[sub_resource type="Resource" id="Resource_gpmed"]
+script = ExtResource("2_njvq3")
+timer_type = 5
+metadata/_custom_type_script = "uid://diaiectjrllp1"
+
+[resource]
+script = ExtResource("1_dfj23")
+stage_name = "Stage 10"
+timers = Array[ExtResource("2_njvq3")]([SubResource("Resource_decay9"), SubResource("Resource_0vjaj"), SubResource("Resource_o812j"), SubResource("Resource_gpmed")])
+target_score = 5500
+metadata/_custom_type_script = "uid://bkq7siep0hkjh"

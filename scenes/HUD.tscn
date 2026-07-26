@@ -1,0 +1,32 @@
+[gd_scene format=3 uid="uid://cndksqmkf2tel"]
+
+[ext_resource type="Script" uid="uid://dnrhd68jd1r73" path="res://scripts/ui/HUD.gd" id="1_qpvh6"]
+
+[node name="Hud" type="Control" unique_id=69231847]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("1_qpvh6")
+
+[node name="MultiplierLabel" type="Label" parent="." unique_id=2037611069]
+layout_mode = 0
+offset_left = 522.0
+offset_top = 15.0
+offset_right = 678.0
+offset_bottom = 86.0
+
+[node name="ScoreLabel" type="Label" parent="." unique_id=417413620]
+layout_mode = 0
+offset_left = 828.0
+offset_right = 1150.0
+offset_bottom = 73.0
+theme_override_font_sizes/font_size = 48
+
+[node name="FlashRect" type="ColorRect" parent="." unique_id=1278680939]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(1, 0, 0, 0)

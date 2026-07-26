@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="StageData" format=3 uid="uid://ndm8bhuecqmw"]
+
+[ext_resource type="Script" uid="uid://bkq7siep0hkjh" path="res://scripts/data/StageData.gd" id="1_nijm5"]
+[ext_resource type="Script" uid="uid://diaiectjrllp1" path="res://scripts/data/TimerData.gd" id="2_g8ed4"]
+
+[sub_resource type="Resource" id="Resource_0vjaj"]
+script = ExtResource("2_g8ed4")
+start_time = 5.0
+timer_type = 4
+metadata/_custom_type_script = "uid://diaiectjrllp1"
+
+[resource]
+script = ExtResource("1_nijm5")
+stage_name = "Stage 7"
+timers = Array[ExtResource("2_g8ed4")]([SubResource("Resource_0vjaj")])
+target_score = 1000
+metadata/_custom_type_script = "uid://bkq7siep0hkjh"

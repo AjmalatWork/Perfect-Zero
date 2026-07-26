@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="Campaign" format=3 uid="uid://dc0jqds6bv52f"]
+
+[ext_resource type="Script" uid="uid://cr6dpu8arwgjn" path="res://scripts/data/Campaign.gd" id="1_n6hmj"]
+[ext_resource type="Script" uid="uid://bkq7siep0hkjh" path="res://scripts/data/StageData.gd" id="2_m05s4"]
+[ext_resource type="Resource" uid="uid://lu6g47exwbjw" path="res://data/stages/Stage_01.tres" id="3_ynvje"]
+[ext_resource type="Resource" uid="uid://b2iyppunrjdi5" path="res://data/stages/Stage_02.tres" id="4_36e6m"]
+[ext_resource type="Resource" uid="uid://c3h1ojcxs80hw" path="res://data/stages/Stage_03.tres" id="5_o812j"]
+[ext_resource type="Resource" uid="uid://dct2um8rd2mmq" path="res://data/stages/Stage_04.tres" id="6_t56r5"]
+[ext_resource type="Resource" uid="uid://blbxj5a2curlw" path="res://data/stages/Stage_05.tres" id="7_c6ud8"]
+[ext_resource type="Resource" uid="uid://0f0d1ywpbr8d" path="res://data/stages/Stage_06.tres" id="8_epl1u"]
+[ext_resource type="Resource" uid="uid://ndm8bhuecqmw" path="res://data/stages/Stage_07.tres" id="9_qp762"]
+[ext_resource type="Resource" uid="uid://u4mjkgbnvu2m" path="res://data/stages/Stage_08.tres" id="10_stg08"]
+[ext_resource type="Resource" uid="uid://bp1xwhq0cxug6" path="res://data/stages/Stage_09.tres" id="11_stg09"]
+[ext_resource type="Resource" uid="uid://rew3205tttbt" path="res://data/stages/Stage_10.tres" id="12_epl1u"]
+[ext_resource type="Resource" uid="uid://iwlshtr6lpks" path="res://data/stages/Stage_11.tres" id="13_qp762"]
+[ext_resource type="Resource" uid="uid://b65k2ik7n7m32" path="res://data/stages/Stage_12.tres" id="14_s7bvc"]
+
+[resource]
+script = ExtResource("1_n6hmj")
+stages = Array[ExtResource("2_m05s4")]([ExtResource("3_ynvje"), ExtResource("4_36e6m"), ExtResource("5_o812j"), ExtResource("6_t56r5"), ExtResource("7_c6ud8"), ExtResource("8_epl1u"), ExtResource("9_qp762"), ExtResource("10_stg08"), ExtResource("11_stg09"), ExtResource("12_epl1u"), ExtResource("13_qp762"), ExtResource("14_s7bvc")])
+metadata/_custom_type_script = "uid://cr6dpu8arwgjn"

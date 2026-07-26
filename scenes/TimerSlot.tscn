@@ -1,0 +1,22 @@
+[gd_scene format=3 uid="uid://cw7reamvswdax"]
+
+[ext_resource type="Script" uid="uid://d086qtqjsgvu3" path="res://scripts/gameplay/TimerSlot.gd" id="1_ij8bb"]
+
+[node name="TimerSlot" type="Panel" unique_id=674047786]
+custom_minimum_size = Vector2(200, 200)
+offset_right = 40.0
+offset_bottom = 40.0
+script = ExtResource("1_ij8bb")
+
+[node name="DigitLabel" type="Label" parent="." unique_id=632597841]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_colors/font_outline_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 48
+horizontal_alignment = 1
+vertical_alignment = 1

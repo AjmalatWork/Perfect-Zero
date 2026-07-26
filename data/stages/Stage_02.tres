@@ -1,0 +1,27 @@
+[gd_resource type="Resource" script_class="StageData" format=3 uid="uid://b2iyppunrjdi5"]
+
+[ext_resource type="Script" uid="uid://bkq7siep0hkjh" path="res://scripts/data/StageData.gd" id="1_fj6dv"]
+[ext_resource type="Script" uid="uid://diaiectjrllp1" path="res://scripts/data/TimerData.gd" id="2_8807k"]
+
+[sub_resource type="Resource" id="Resource_nijm5"]
+script = ExtResource("2_8807k")
+start_time = 6.0
+metadata/_custom_type_script = "uid://diaiectjrllp1"
+
+[sub_resource type="Resource" id="Resource_0vjaj"]
+script = ExtResource("2_8807k")
+start_time = 5.0
+timer_type = 1
+metadata/_custom_type_script = "uid://diaiectjrllp1"
+
+[sub_resource type="Resource" id="Resource_g8ed4"]
+script = ExtResource("2_8807k")
+start_time = 7.0
+metadata/_custom_type_script = "uid://diaiectjrllp1"
+
+[resource]
+script = ExtResource("1_fj6dv")
+stage_name = "Stage 2"
+timers = Array[ExtResource("2_8807k")]([SubResource("Resource_nijm5"), SubResource("Resource_0vjaj"), SubResource("Resource_g8ed4")])
+target_score = 2800
+metadata/_custom_type_script = "uid://bkq7siep0hkjh"

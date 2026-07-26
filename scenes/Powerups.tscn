@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://d0pwrup5cn0de"]
+
+[ext_resource type="Script" path="res://scripts/autoload/Powerups.gd" id="1_pwrup"]
+
+[node name="Powerups" type="Node"]
+script = ExtResource("1_pwrup")
