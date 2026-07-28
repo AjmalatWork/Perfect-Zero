@@ -24,11 +24,11 @@ const COLORS := {
 
 const DESCRIPTIONS := {
 	TimerData.TimerType.NORMAL: "A plain timer. Just stop it at 0.00.",
-	TimerData.TimerType.RED: "On stop, speeds up every other timer — and makes them score more.",
+	TimerData.TimerType.RED: "On stop, speeds up every other timer - and makes them score more.",
 	TimerData.TimerType.BLUE: "On stop, pauses every other timer for a second.",
 	TimerData.TimerType.GOLDEN: "A guaranteed PERFECT whenever you click it, worth double.",
-	TimerData.TimerType.BLACKOUT: "Its digits vanish near zero — time it by ear. Worth 2.5×.",
-	TimerData.TimerType.DECAY: "Counts up, not down. Stop it fast — its best grade drains away as it climbs.",
+	TimerData.TimerType.BLACKOUT: "Its digits vanish near zero - time it by ear. Worth 2.5×.",
+	TimerData.TimerType.DECAY: "Counts up, not down. Stop it fast - its best grade drains away as it climbs.",
 }
 
 # DECAY's border steps through these as its ceiling drops, so the tier is

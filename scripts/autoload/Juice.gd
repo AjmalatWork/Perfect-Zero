@@ -60,6 +60,42 @@ const ABERRATION_ENABLED := true
 const ABERRATION_MS := 200.0
 const ABERRATION_COLOR := Color(0.9, 0.15, 0.2, 0.22)
 
+# --- Low-life ambient (Endless) ---------------------------------------------
+# The danger counterpart to the streak-heat vignette above, built on the same
+# radial-gradient pattern so the two read as a matched pair of ambient state
+# tells rather than unrelated effects. They can legitimately be on at once (a
+# hot streak on your last life), so - exactly like Overclock vs. heat - they are
+# separated by BEHAVIOUR as well as hue: heat is a steady warm bloom whose alpha
+# simply tracks the streak, while this is a deeper red that never sits still. The
+# slow pulse is the distinguishing signal, not the colour.
+#
+# Deliberately slow and moderate: this is a calm-but-present "you are one mistake
+# from the end", not an alarm. A fast or high-alpha version of this reads as
+# panic and makes the board harder to actually play.
+const LOW_LIFE_COLOR := Color("ff1030")
+const LOW_LIFE_ALPHA := 0.26
+const LOW_LIFE_PULSE_HZ := 0.55      # ~1.8s per breath
+const LOW_LIFE_PULSE_DEPTH := 0.45   # fraction of alpha the pulse swings
+const LOW_LIFE_FADE := 1.6
+
+# --- Run-over stillness (Endless) -------------------------------------------
+# The beat between the final life being lost and the summary appearing. Sits in
+# the same family as StageResultScreen's "holding breath" pause, but owned here
+# because it spans a state change (live board -> end screen) rather than
+# happening inside one screen. IN + HOLD is the wait the player actually feels;
+# OUT plays under the already-swapped end screen as it emerges from the dark.
+const STILLNESS_COLOR := Color(0.01, 0.01, 0.02, 1.0)
+const STILLNESS_ALPHA := 0.62
+const STILLNESS_IN := 0.18
+const STILLNESS_HOLD := 0.45
+const STILLNESS_OUT := 0.3
+
+var _low_life_vignette: TextureRect
+var _low_life_target: float = 0.0
+var _low_life_level: float = 0.0
+
+var _stillness_rect: ColorRect
+
 var heat: float = 0.0            # 0..1, driven by the live PERFECT streak
 
 var _target: Node2D              # the Main root
@@ -183,6 +219,7 @@ func register_stage(node: Node2D) -> void:
 	_base_position = node.position
 	_has_base = true
 	_build_vignette()
+	_build_low_life_vignette()
 	_build_aberration()
 
 # --- Public API -----------------------------------------------------------
@@ -568,6 +605,12 @@ func reaction_ripple(origin_global: Vector2, type: int) -> void:
 	ripple.global_position = origin_global
 	ripple.configure(TimerTypeInfo.color_of(type), RIPPLE_RADIUS, RIPPLE_DURATION, 5.0, false)
 
+# Low-life state source. Driven by EndlessRunner off its own lives bookkeeping
+# rather than derived here, since "low" is a tunable threshold that belongs with
+# the mode that owns lives. Campaign never calls this.
+func set_low_life(active: bool) -> void:
+	_low_life_target = 1.0 if active else 0.0
+
 # Heat source. Campaign pushes a presentation-only streak from StageController;
 # Endless arrives here via ScoreManager.perfect_streak_changed.
 func set_streak(count: int) -> void:
@@ -642,6 +685,12 @@ func _on_state_changed(new_state: int) -> void:
 		_overclock_level = 0.0
 		if _overclock_bands != null:
 			_overclock_bands.visible = false
+		# A run left on its last life would otherwise hand the danger vignette to
+		# the next screen (and to the next run, which starts at full lives).
+		_low_life_target = 0.0
+		_low_life_level = 0.0
+		if _low_life_vignette != null:
+			_low_life_vignette.visible = false
 		# Leaving play: drop heat and make sure no effect leaves Main displaced.
 		set_streak(0)
 		_reset_transform()
@@ -669,6 +718,21 @@ func _process(delta: float) -> void:
 	if _vignette != null:
 		_vignette.modulate.a = move_toward(
 			_vignette.modulate.a, heat * HEAT_VIGNETTE_ALPHA, delta * HEAT_FADE_SPEED)
+
+	if _low_life_vignette != null:
+		_low_life_level = move_toward(_low_life_level, _low_life_target, delta * LOW_LIFE_FADE)
+		_low_life_vignette.visible = _low_life_level > 0.001
+		if _low_life_vignette.visible:
+			# Scaled by effect_scale() rather than killed by
+			# motion_effects_enabled(): a persistent pulsing red vignette is
+			# squarely in the "aggressive" category the intensity policy covers,
+			# but the authoritative life count is the cross row at the bottom of
+			# the HUD, so softening this loses atmosphere and never loses
+			# information.
+			var breath: float = 1.0 - LOW_LIFE_PULSE_DEPTH \
+				* (0.5 + 0.5 * cos(float(now) / 1000.0 * TAU * LOW_LIFE_PULSE_HZ))
+			_low_life_vignette.modulate.a = LOW_LIFE_ALPHA * _low_life_level \
+				* breath * Settings.effect_scale()
 
 	# One phase drives both edge treatments, which is what lets the combined
 	# state pulse in opposition rather than the two drifting against each other.
@@ -813,6 +877,161 @@ func _build_vignette() -> void:
 	_vignette.modulate.a = 0.0
 	_vignette.visible = false
 	_target.add_child(_vignette)
+
+# Same construction as the heat vignette, with the gradient's transparent core
+# held wider (0.62 vs 0.55) so the red stays clear of the 3x3 grid and hugs the
+# frame instead of creeping over the timers - this one is on continuously for
+# potentially minutes at a time, where heat only spikes for a few seconds.
+func _build_low_life_vignette() -> void:
+	if _low_life_vignette != null or _target == null:
+		return
+
+	var grad := Gradient.new()
+	grad.offsets = PackedFloat32Array([0.0, 0.62, 1.0])
+	grad.colors = PackedColorArray([
+		Color(LOW_LIFE_COLOR.r, LOW_LIFE_COLOR.g, LOW_LIFE_COLOR.b, 0.0),
+		Color(LOW_LIFE_COLOR.r, LOW_LIFE_COLOR.g, LOW_LIFE_COLOR.b, 0.0),
+		Color(LOW_LIFE_COLOR.r, LOW_LIFE_COLOR.g, LOW_LIFE_COLOR.b, 1.0),
+	])
+
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	tex.width = 256
+	tex.height = 256
+
+	_low_life_vignette = TextureRect.new()
+	_low_life_vignette.texture = tex
+	_low_life_vignette.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_low_life_vignette.stretch_mode = TextureRect.STRETCH_SCALE
+	_low_life_vignette.position = Vector2.ZERO
+	_low_life_vignette.size = VIEWPORT_SIZE
+	_low_life_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_low_life_vignette.modulate.a = 0.0
+	_low_life_vignette.visible = false
+	_target.add_child(_low_life_vignette)
+
+# --- Run-over stillness -----------------------------------------------------
+
+func _build_stillness_rect() -> void:
+	if _stillness_rect != null:
+		return
+	# Below the fail flash (50) and the run transition (60): the final FAIL's
+	# own punctuation has to still read over this dim, and a RETRY fading to
+	# black afterwards has to cover it.
+	var layer := CanvasLayer.new()
+	layer.layer = 45
+	add_child(layer)
+
+	_stillness_rect = ColorRect.new()
+	_stillness_rect.color = STILLNESS_COLOR
+	_stillness_rect.position = Vector2.ZERO
+	_stillness_rect.size = VIEWPORT_SIZE
+	_stillness_rect.visible = false
+	_stillness_rect.modulate.a = 0.0
+	layer.add_child(_stillness_rect)
+
+# Dims the board and holds, calls `on_dark` (expected to swap in the end screen),
+# then lifts the dim so the summary emerges out of it. Deliberately NOT gated by
+# reduce_intensity: this is a navigational transition in the same family as
+# run_transition() and the pause fades, not a flash or a shake.
+#
+# Awaiting it is what keeps the caller's teardown ordered behind the beat.
+func run_over_stillness(on_dark: Callable) -> void:
+	_build_stillness_rect()
+	# STOP while the board is still visible underneath, so a player mashing
+	# through the last FAIL can't click a live timer during the beat.
+	_stillness_rect.mouse_filter = Control.MOUSE_FILTER_STOP
+	_stillness_rect.visible = true
+	_stillness_rect.modulate.a = 0.0
+
+	var into := create_tween()
+	into.tween_property(_stillness_rect, "modulate:a", STILLNESS_ALPHA, STILLNESS_IN)
+	await into.finished
+
+	await get_tree().create_timer(STILLNESS_HOLD, true, false, true).timeout
+
+	on_dark.call()
+	# The end screen owns input from here - keep the fading dim out of its way.
+	_stillness_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var out := create_tween()
+	out.tween_property(_stillness_rect, "modulate:a", 0.0, STILLNESS_OUT)
+	await out.finished
+	_stillness_rect.visible = false
+
+# --- Stage outro ------------------------------------------------------------
+# Leaving the Arcade result screen echoes how the stage actually went: a strong
+# clear wipes brighter and faster, a mediocre one is a plainer, slower cut.
+# Keyed purely off the tier the reveal already computed - this owns no state and
+# derives no quality metric of its own.
+#
+# Deliberately separate from run_transition(): that one is the shared
+# fade-to-black used by RETRY and PauseMenu's RESTART, and is meant to read
+# identically from every entry point. This one exists precisely to differ.
+const OUTRO_DURATION := [0.34, 0.26, 0.2]   # higher tier = faster
+const OUTRO_ALPHA := [0.45, 0.72, 0.95]     # higher tier = brighter
+const OUTRO_BAND_WIDTH := 0.55              # fraction of the screen the sweep spans
+
+var _outro_layer: CanvasLayer
+var _outro_band: TextureRect
+
+func _build_outro() -> void:
+	if _outro_band != null:
+		return
+	# Below run_transition's layer (60) so a RETRY fading to black still covers
+	# a sweep that happens to be mid-flight.
+	_outro_layer = CanvasLayer.new()
+	_outro_layer.layer = 55
+	add_child(_outro_layer)
+
+	# White gradient tinted per tier via modulate, same approach as the
+	# anticipation tint - one texture, every variant.
+	var grad := Gradient.new()
+	grad.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
+	grad.colors = PackedColorArray([
+		Color(1, 1, 1, 0.0),
+		Color(1, 1, 1, 1.0),
+		Color(1, 1, 1, 0.0),
+	])
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill_from = Vector2(0, 0)
+	tex.fill_to = Vector2(1, 0)
+	tex.width = 128
+	tex.height = 4
+
+	_outro_band = TextureRect.new()
+	_outro_band.texture = tex
+	_outro_band.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_outro_band.stretch_mode = TextureRect.STRETCH_SCALE
+	_outro_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_outro_band.size = Vector2(VIEWPORT_SIZE.x * OUTRO_BAND_WIDTH, VIEWPORT_SIZE.y)
+	_outro_band.visible = false
+	_outro_layer.add_child(_outro_band)
+
+# Sweeps a tier-coloured band across the screen. Awaitable, so the caller can
+# change state behind it rather than cutting mid-sweep.
+#
+# The tint is passed in rather than looked up here: the tier palette belongs to
+# the screen that computes the tier, and copying it into this file would be a
+# second source of truth for the same colours.
+func stage_outro(tier: int, tint: Color) -> void:
+	_build_outro()
+	var t: int = clampi(tier, 0, OUTRO_DURATION.size() - 1)
+	var duration: float = OUTRO_DURATION[t]
+
+	_outro_band.modulate = Color(tint.r, tint.g, tint.b, OUTRO_ALPHA[t] * Settings.effect_scale())
+	_outro_band.position = Vector2(-_outro_band.size.x, 0)
+	_outro_band.visible = true
+
+	var tween := create_tween()
+	tween.tween_property(_outro_band, "position:x", VIEWPORT_SIZE.x, duration) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	await tween.finished
+	_outro_band.visible = false
 
 # --- Fail flash ------------------------------------------------------------
 

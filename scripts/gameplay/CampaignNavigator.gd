@@ -4,6 +4,7 @@ class_name CampaignNavigator
 @export var campaign: Campaign
 @export var stage_controller: StageController
 @export var tutorial_manager: TutorialManager
+@export var intro_demo: IntroDemo
 
 var current_index: int = 0
 
@@ -27,14 +28,20 @@ func start_from_index(index: int, reset_base: bool = true) -> void:
 	current_index = index
 	GameManager.set_state(GameManager.GameState.PLAYING)
 
-	# Show any first-time timer-type tutorials, then actually spawn the stage.
+	# Show the one-time ghost-cursor intro demo, then any first-time timer-type
+	# tutorials, then actually spawn the stage.
 	var stage: StageData = campaign.stages[current_index]
 	var spawn := func() -> void:
 		stage_controller.start_stage(stage, reset_base)
-	if tutorial_manager != null:
-		tutorial_manager.check_and_show(stage, spawn)
+	var show_tutorials := func() -> void:
+		if tutorial_manager != null:
+			tutorial_manager.check_and_show(stage, spawn)
+		else:
+			spawn.call()
+	if intro_demo != null:
+		intro_demo.maybe_show(show_tutorials)
 	else:
-		spawn.call()
+		show_tutorials.call()
 
 func _on_stage_cleared() -> void:
 	# Persist unlock progress the moment a stage is cleared, independent of whether

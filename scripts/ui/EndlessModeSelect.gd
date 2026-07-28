@@ -49,11 +49,11 @@ func _build() -> void:
 
 	col.add_child(_heading("Choose your mode", 26, TEXT_FILL, 0))
 
-	var normal := _button("NORMAL   —   3 lives", NEON)
+	var normal := _button("NORMAL   -   3 lives", NEON)
 	normal.pressed.connect(func(): _start(3))
 	col.add_child(_wrap(normal))
 
-	var hardcore := _button("HARDCORE   —   1 life", RED)
+	var hardcore := _button("HARDCORE   -   1 life", RED)
 	hardcore.pressed.connect(func(): _start(1))
 	col.add_child(_wrap(hardcore))
 

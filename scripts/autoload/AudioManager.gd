@@ -474,6 +474,32 @@ func play_expire() -> void:
 		# the stage-ending weight of a FAIL.
 		_play(_get_punchy([150.0, 141.0], 0.6, 0.35, 2.2, 0.15))
 
+# Endless losing a life. Reserved for that event alone - deliberately NOT reused
+# from play_expire()/play_miss(), because the whole point of the life-loss beat
+# is that it lands as a second, distinct thing after the FAIL the player already
+# heard. Lower than play_expire's moan and bending hard downward rather than
+# sitting flat, so it reads as something being taken rather than something
+# merely going wrong.
+const LIFE_LOST_CHORD := [98.0, 130.81, 155.56]
+
+func play_life_lost() -> void:
+	if USE_LEGACY_ONESHOT_SFX:
+		_play(_get_chord(LIFE_LOST_CHORD, 0.55, 0.42))
+	else:
+		_play(_get_punchy(LIFE_LOST_CHORD, 0.55, 0.42, 2.6, 0.2, 1.45, 0.28))
+
+# Endless beating a stored personal best. Higher and brighter than
+# play_stage_clear()'s fanfare (which tops out at 1046.5) so the two don't blur
+# together, and fired at most once per run - the flourish is combined across
+# whichever stats improved rather than repeating per stat.
+const NEW_BEST_RUN := [659.25, 880.0, 1046.5, 1318.51]
+
+func play_new_best() -> void:
+	if USE_LEGACY_ONESHOT_SFX:
+		_play(_get_arpeggio(NEW_BEST_RUN, 0.1, 0.4))
+	else:
+		_play(_get_punchy_sequence(NEW_BEST_RUN, 0.1, 0.4, 4.5, 0.4))
+
 func play_stage_clear() -> void:
 	if USE_LEGACY_ONESHOT_SFX:
 		_play(_get_arpeggio([523.25, 659.25, 783.99, 1046.5], 0.12, 0.3))

@@ -36,6 +36,12 @@ class_name EndlessRunner
 # types weighted by their own weights (Normal excluded from that draw).
 @export var colored_pity_window: float = 20.0
 
+# Lives remaining at or below this arm the low-life ambient state. Suppressed
+# entirely in Hardcore (see _update_low_life): a one-life mode is *always* at
+# the threshold, and a danger signal that is on from the first second of every
+# run stops being a signal at all.
+@export var low_life_threshold: int = 1
+
 const VALUE_PICK_ATTEMPTS := 20  # random resamples tried to satisfy min_zero_gap before settling
 
 const BLACKOUT_VALUE_MIN := 7.0  # Blackout's own fixed start_time range -
@@ -77,10 +83,27 @@ var _time_since_spawn: float = 0.0
 var _time_since_colored: float = 0.0
 var _running: bool = false
 
-# Results handed to the end screen.
+const LIFE_LOSS_BEAT := 0.18  # gap after the FAIL's own feedback before the life reaction
+# Long enough for the life-loss reaction above (which fires at LIFE_LOSS_BEAT and
+# whose punch/flash run ~0.3s past that) to finish before the run-over dim starts.
+const RUN_OVER_LEAD := 0.55
+
+# Results handed to the end screen. `run_*` are this run's figures; `best_*` are
+# the stored records (already updated to include this run if it beat them), and
+# each `is_new_best_*` says whether this run is what set them.
 var final_score: int = 0
 var best_score: int = 0
 var is_new_best: bool = false
+var run_time: float = 0.0
+var best_time: float = 0.0
+var is_new_best_time: bool = false
+var run_best_streak: int = 0
+var best_streak: int = 0
+var is_new_best_streak: bool = false
+
+# This run's score against the record it was measured relative to, 0..1. Drives
+# how big the summary reveal allows itself to be - see EndlessEndScreen.
+var run_quality: float = 0.0
 
 func start_run(lives: int) -> void:
 	max_lives = lives
@@ -98,6 +121,10 @@ func start_run(lives: int) -> void:
 	if endless_hud != null:
 		endless_hud.set_max_lives(max_lives)
 		endless_hud.update_crosses(0)
+
+	# A retry started from the end screen inherits whatever the previous run left
+	# armed, and start_run() is the one path every fresh run goes through.
+	_update_low_life()
 
 	_connect_events()
 	_running = true
@@ -404,8 +431,32 @@ func _handle_fail() -> void:
 	fail_count += 1
 	if endless_hud != null:
 		endless_hud.update_crosses(fail_count)
+	_update_low_life()
+	# Deliberately not awaited: the life-loss beat is presentation that plays out
+	# alongside the run ending, and awaiting it here would delay the end-of-run
+	# bookkeeping behind an animation.
+	_play_life_loss_beat(fail_count - 1)
 	if fail_count >= max_lives:
-		_end_run()
+		_begin_run_over()
+
+# The FAIL's own feedback (shake + fail flash, fired from Juice) has already
+# started by the time we get here. Holding this back by a beat is the whole
+# point: the player reads "I failed", and then, separately, "and that cost me a
+# life", instead of one blurred moment where the two effects fight.
+func _play_life_loss_beat(spent_index: int) -> void:
+	await get_tree().create_timer(LIFE_LOSS_BEAT, true, false, true).timeout
+	if endless_hud != null and is_instance_valid(endless_hud):
+		endless_hud.react_life_lost(spent_index)
+	AudioManager.play_life_lost()
+
+# Hardcore is excluded outright rather than by threshold arithmetic: with one
+# life the state would be armed before the player has done anything, and a
+# permanent danger vignette is wallpaper, not information.
+func _update_low_life() -> void:
+	if max_lives <= 1:
+		Juice.set_low_life(false)
+		return
+	Juice.set_low_life(max_lives - fail_count <= low_life_threshold)
 
 func _free_cell_after_delay(idx: int, slot: TimerSlot) -> void:
 	# The slot owns its own hold+fade timing (TimerSlot.faded_out) and already
@@ -428,18 +479,87 @@ func abort_run() -> void:
 	_disconnect_events()
 	_clear_cells()
 
+# The stillness beat between the last life going and the summary appearing.
+#
+# _running is cleared first so the spawn scheduler, the difficulty ramp and the
+# per-frame ambient rewrite all stop before the beat - otherwise _process would
+# stomp the ambient drop below on the very next frame. freeze_gameplay() holds
+# the timers that are still on the board, per the standing rule that nothing
+# advances behind a visually stopped screen: without it the surviving timers
+# would keep visibly counting down through a beat that is meant to be still.
+func _begin_run_over() -> void:
+	_running = false
+	_disconnect_events()
+	# Frozen from this instant so the surviving timers hold still underneath the
+	# whole sequence below, rather than continuing to visibly count down through
+	# a beat whose entire job is stillness.
+	Juice.freeze_gameplay()
+	Juice.set_low_life(false)
+	AudioManager.set_ambient_intensity(0.0)
+	AudioManager.set_ambient_boost(0.0)
+
+	# The final life loses its life exactly like any other one does, and that
+	# beat has to finish reading before the run-over dim starts - otherwise the
+	# stillness fades in over the top of the punch/flash it is supposed to
+	# follow, and the two collapse back into the single blurred moment that
+	# splitting them was meant to avoid.
+	await get_tree().create_timer(RUN_OVER_LEAD, true, false, true).timeout
+
+	# The board is torn down and the state swapped inside the dark, so the
+	# summary emerges from the dim rather than cutting in over a live board.
+	await Juice.run_over_stillness(func() -> void:
+		Juice.release_gameplay()
+		_end_run())
+
 func _end_run() -> void:
 	_running = false
 	_disconnect_events()
 	_clear_cells()
 
+	var hardcore := max_lives <= 1
+	var suffix := "hardcore" if hardcore else "normal"
+
+	run_time = elapsed_time
+	run_best_streak = ScoreManager.run_best_streak
 	final_score = ScoreManager.campaign_total
-	var key := "highscore_endless_hardcore" if max_lives <= 1 else "highscore_endless_normal"
-	best_score = SaveManager.load_high_score(key)
+
+	var score_key := "highscore_endless_%s" % suffix
+	var prev_best_score: int = SaveManager.load_high_score(score_key)
+	best_score = prev_best_score
 	is_new_best = final_score > best_score
 	if is_new_best:
 		best_score = final_score
-		SaveManager.save_high_score(key, final_score)
+		SaveManager.save_high_score(score_key, final_score)
+
+	# Streak and survival time are stored per mode alongside the score record.
+	# Time is kept as whole milliseconds so it can ride SaveManager's int-typed,
+	# type-guarded high-score path rather than the untyped generic store.
+	var streak_key := "beststreak_endless_%s" % suffix
+	best_streak = SaveManager.load_high_score(streak_key)
+	is_new_best_streak = run_best_streak > best_streak
+	if is_new_best_streak:
+		best_streak = run_best_streak
+		SaveManager.save_high_score(streak_key, run_best_streak)
+
+	var time_key := "besttime_endless_%s" % suffix
+	var run_ms: int = int(round(run_time * 1000.0))
+	var best_ms: int = SaveManager.load_high_score(time_key)
+	is_new_best_time = run_ms > best_ms
+	if is_new_best_time:
+		best_ms = run_ms
+		SaveManager.save_high_score(time_key, run_ms)
+	best_time = float(best_ms) / 1000.0
+
+	# Measured against the record the run was actually chasing, not the one it
+	# just set - otherwise every new best would score exactly 1.0 and the tier
+	# would carry no information. A first-ever run (no stored best) has nothing
+	# to be measured against, so it lands mid-tier rather than bottom.
+	if is_new_best:
+		run_quality = 1.0
+	elif prev_best_score > 0:
+		run_quality = clampf(float(final_score) / float(prev_best_score), 0.0, 1.0)
+	else:
+		run_quality = 0.5
 
 	GameManager.set_state(GameManager.GameState.ENDLESS_END)
 

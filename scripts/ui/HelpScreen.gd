@@ -159,7 +159,7 @@ func _build_page_3() -> Control:
 
 	col.add_child(_heading("Scoring", 36, GOLD))
 	col.add_child(_line(
-		"Points scale with how close to 0.00 you stop — closer scores more.",
+		"Points scale with how close to 0.00 you stop - closer scores more.",
 		22, TEXT_FILL))
 
 	var scoring_grid := GridContainer.new()

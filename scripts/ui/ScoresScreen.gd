@@ -60,8 +60,8 @@ func _populate() -> void:
 
 	var en: int = SaveManager.load_high_score("highscore_endless_normal")
 	var eh: int = SaveManager.load_high_score("highscore_endless_hardcore")
-	_col.add_child(_row("Endless Normal", str(en) if en > 0 else "—", "?????", false))
-	_col.add_child(_row("Endless Hardcore", str(eh) if eh > 0 else "—", "?????", false))
+	_col.add_child(_row("Endless Normal", str(en) if en > 0 else "-", "?????", false))
+	_col.add_child(_row("Endless Hardcore", str(eh) if eh > 0 else "-", "?????", false))
 
 	_col.add_child(_spacer(16))
 	var back := _button("BACK", NEON)
@@ -91,8 +91,8 @@ func _build_stage_list(stages: Array) -> Control:
 	for i in range(stages.size()):
 		var stage: StageData = stages[i]
 		var best: int = SaveManager.load_high_score("highscore_stage_%d" % i)
-		var best_text: String = str(best) if best > 0 else "—"
-		var target_text: String = str(stage.target_score) if stage.target_score > 0 else "—"
+		var best_text: String = str(best) if best > 0 else "-"
+		var target_text: String = str(stage.target_score) if stage.target_score > 0 else "-"
 		col.add_child(_row(stage.stage_name, best_text, target_text, false))
 	return col
 

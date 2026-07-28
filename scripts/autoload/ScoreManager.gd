@@ -25,6 +25,13 @@ var stage_tally: int = 0          # base points banked this segment, before the 
 var campaign_total: int = 0       # running sum of all banked segments this run
 var perfect_streak: int = 0       # consecutive PERFECTs (live path)
 
+# High-water mark of perfect_streak across the whole run, as opposed to the live
+# value above which drops to 0 the moment a streak breaks. Endless's run summary
+# reports "best streak reached", which the live counter can't answer by the time
+# the run is over - it is almost always 0 at that point, since the run ends on a
+# FAIL. Reset by reset_run() alongside everything else in the live model.
+var run_best_streak: int = 0
+
 static func grade_color(grade: String) -> Color:
 	return GRADE_COLORS.get(grade, Color.WHITE)
 
@@ -99,6 +106,7 @@ func register_result(grade: String, distance: float, bonus_factor: float = 1.0) 
 		perfect_streak += 1
 	else:
 		perfect_streak = 0
+	run_best_streak = maxi(run_best_streak, perfect_streak)
 	perfect_streak_changed.emit(perfect_streak)
 
 	if grade == "FAIL":
@@ -132,6 +140,7 @@ func reset_run() -> void:
 	multiplier = 1.0
 	campaign_total = 0
 	perfect_streak = 0
+	run_best_streak = 0
 	tally_changed.emit(stage_tally, multiplier)
 	campaign_total_changed.emit(campaign_total)
 	perfect_streak_changed.emit(perfect_streak)

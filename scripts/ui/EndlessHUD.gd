@@ -166,6 +166,53 @@ func update_crosses(fail_count: int) -> void:
 		for line in _cross_labels[i].get_children():
 			line.default_color = color
 
+# --- Life-loss reaction ---------------------------------------------------
+# The cross that was just spent gets its own beat, so losing a life is
+# distinguishable from any other FAIL rather than being just a recolour the
+# player is unlikely to notice while looking at the board. A punch + flash
+# rather than a shatter: the icon is two Line2Ds, so a shatter would mean
+# animating the segments apart as a separate throwaway node, and this reads
+# nearly as well for a fraction of the moving parts.
+#
+# EndlessRunner sequences the call itself, deliberately a beat AFTER the FAIL's
+# own shake/aberration - "I failed", then "and that cost me a life", as two
+# reads instead of one blurred moment.
+const LIFE_LOSS_FLASH := Color(1, 1, 1, 1)
+const LIFE_LOSS_PUNCH := 1.55
+
+func react_life_lost(index: int) -> void:
+	# Hardcore hides the row entirely (see set_max_lives), so there is nothing
+	# to react with - the screen-wide FAIL feedback carries that case alone.
+	if index < 0 or index >= _cross_labels.size():
+		return
+	var icon: Control = _cross_labels[index]
+	if not is_instance_valid(icon):
+		return
+
+	# Blown out to white on impact, settling into the spent-life red - a flash
+	# that resolves into the state change, rather than a flash on top of it.
+	for line in icon.get_children():
+		line.default_color = LIFE_LOSS_FLASH
+	var recolor := create_tween()
+	recolor.set_parallel(true)
+	for line in icon.get_children():
+		recolor.tween_property(line, "default_color", FAIL_RED, 0.3)
+
+	# Scale only, no positional kick: the icon lives in an HBoxContainer, which
+	# owns its children's positions and re-asserts them on every sort - a
+	# position tween would be fighting the layout. Containers don't manage
+	# scale, so this is free of that conflict (the same reason DigitCounter
+	# pops its digits by scale rather than offset).
+	icon.pivot_offset = icon.size * 0.5
+	icon.scale = Vector2.ONE
+	var hit := create_tween()
+	# Hard snap outward, slow settle back through an overshoot - a struck
+	# object, not a button press.
+	hit.tween_property(icon, "scale", Vector2.ONE * LIFE_LOSS_PUNCH, 0.07) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	hit.tween_property(icon, "scale", Vector2.ONE, 0.3) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
 # Drawn as two diagonal Line2Ds rather than a "✕" text glyph - some exported
 # builds' bundled font (notably HTML5/Web) lacks that Unicode character and
 # shows tofu boxes.

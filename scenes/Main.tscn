@@ -11,6 +11,7 @@
 [ext_resource type="PackedScene" path="res://scenes/LevelSelect.tscn" id="8_select"]
 [ext_resource type="PackedScene" path="res://scenes/StageResultScreen.tscn" id="9_result"]
 [ext_resource type="Script" uid="uid://cqd1j23pjjhi6" path="res://scripts/gameplay/TutorialManager.gd" id="10_tut"]
+[ext_resource type="Script" path="res://scripts/gameplay/IntroDemo.gd" id="21_introdemo"]
 [ext_resource type="PackedScene" path="res://scenes/HelpScreen.tscn" id="11_help"]
 [ext_resource type="PackedScene" path="res://scenes/ScoresScreen.tscn" id="12_scores"]
 [ext_resource type="Script" uid="uid://bb0t0y2fn1bu1" path="res://scripts/gameplay/EndlessRunner.gd" id="13_erun"]
@@ -88,11 +89,15 @@ timer_slot_scene = ExtResource("3_vcsgt")
 [node name="TutorialManager" type="Node" parent="." unique_id=910025005]
 script = ExtResource("10_tut")
 
-[node name="CampaignNavigator" type="Node" parent="." unique_id=910025001 node_paths=PackedStringArray("stage_controller", "tutorial_manager")]
+[node name="IntroDemo" type="Node" parent="." unique_id=910025018]
+script = ExtResource("21_introdemo")
+
+[node name="CampaignNavigator" type="Node" parent="." unique_id=910025001 node_paths=PackedStringArray("stage_controller", "tutorial_manager", "intro_demo")]
 script = ExtResource("5_navigator")
 campaign = ExtResource("6_campaign")
 stage_controller = NodePath("../StageController")
 tutorial_manager = NodePath("../TutorialManager")
+intro_demo = NodePath("../IntroDemo")
 
 [node name="TitleScreen" parent="." unique_id=910025002 node_paths=PackedStringArray("campaign_navigator") instance=ExtResource("7_title")]
 campaign_navigator = NodePath("../CampaignNavigator")
