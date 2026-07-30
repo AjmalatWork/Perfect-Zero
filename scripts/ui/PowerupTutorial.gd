@@ -19,8 +19,16 @@ static func is_new() -> bool:
 static func mark_seen() -> void:
 	SaveManager.save_high_score(SEEN_KEY, 1)
 
-# Builds the popup under `host` and marks it seen once dismissed.
-static func show_popup(host: Node) -> void:
+# Builds the popup under `host` and marks it seen once dismissed. `on_dismiss`
+# (optional) fires right after mark_seen() - lets a caller defer starting the
+# actual run until the player has closed this, rather than starting underneath it.
+#
+# Returns the popup's CanvasLayer so a caller can tear it down itself. That
+# matters because the popup is a CanvasLayer, not a CanvasItem: hiding the host
+# screen does NOT hide it (the same reason TutorialManager tracks and explicitly
+# frees its own popup layer), so any path that leaves the screen while this is
+# up has to free it or it survives as orphaned UI over the next screen.
+static func show_popup(host: Node, on_dismiss: Callable = Callable()) -> CanvasLayer:
 	var layer := CanvasLayer.new()
 	layer.layer = 30
 	host.add_child(layer)
@@ -66,10 +74,13 @@ static func show_popup(host: Node) -> void:
 	var on_got := func() -> void:
 		mark_seen()
 		layer.queue_free()
+		if on_dismiss.is_valid():
+			on_dismiss.call()
 	got.pressed.connect(on_got)
 	var got_wrap := CenterContainer.new()
 	got_wrap.add_child(got)
 	col.add_child(got_wrap)
+	return layer
 
 static func _row(kind: int) -> Control:
 	var accent: Color = PowerupSystem.color_of(kind)

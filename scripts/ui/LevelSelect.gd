@@ -8,7 +8,8 @@ const LOCKED_ACCENT := Color("8b90a8")  # muted grey
 @export var campaign: Campaign
 @export var campaign_navigator: CampaignNavigator
 
-@onready var grid: GridContainer = $Center/Grid
+@onready var grid: GridContainer = $Center/Col/Grid
+@onready var _col: VBoxContainer = $Center/Col
 
 func _ready() -> void:
 	grid.add_theme_constant_override("h_separation", 24)
@@ -16,15 +17,36 @@ func _ready() -> void:
 	GameManager.state_changed.connect(_on_state_changed)
 	_add_back_button()
 
+# Centered below the grid, last item in the same column - matching where every
+# other screen (Help/Scores/Credits/Endless Mode Select) puts BACK, rather than
+# pinned to a fixed top-left corner on its own.
 func _add_back_button() -> void:
 	var back := Button.new()
 	back.text = "BACK"
-	back.custom_minimum_size = Vector2(160, 56)
-	back.position = Vector2(40, 40)
-	_style_button(back, LOCKED_ACCENT)
-	back.pressed.connect(func(): GameManager.set_state(GameManager.GameState.MENU))
+	back.custom_minimum_size = Vector2(200, 64)  # matches the Scores screen's BACK button
+	_style_button(back, NORMAL_ACCENT)  # same cyan as the title screen's ARCADE button
+	back.pressed.connect(_on_back)
 	PressFeedback.apply(back)
-	add_child(back)
+	var wrap := CenterContainer.new()
+	wrap.add_child(back)
+	_col.add_child(wrap)
+
+# Android's system back (bridged to ui_cancel by MainScreenRouter) and desktop
+# Escape both land on the same handler the on-screen BACK button uses.
+#
+# Guarded on the current state rather than on visibility: every screen stays in
+# the tree while hidden - MainScreenRouter only toggles `visible` - and
+# _unhandled_input still fires on hidden nodes, so without this guard a single
+# back press would be answered by every screen in the game at once.
+func _unhandled_input(event: InputEvent) -> void:
+	if GameManager.current_state != GameManager.GameState.LEVEL_SELECT:
+		return
+	if event.is_action_pressed("ui_cancel"):
+		_on_back()
+		get_viewport().set_input_as_handled()
+
+func _on_back() -> void:
+	GameManager.set_state(GameManager.GameState.MENU)
 
 func _on_state_changed(new_state: int) -> void:
 	# Rebuild each time the screen is shown so unlock progress is always current.

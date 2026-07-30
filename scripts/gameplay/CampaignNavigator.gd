@@ -6,6 +6,11 @@ class_name CampaignNavigator
 @export var tutorial_manager: TutorialManager
 @export var intro_demo: IntroDemo
 
+# Clearing this many stages unlocks the ENDLESS button on the title screen. A
+# single easily-tunable constant, per the brief - confirmed at 3 with the
+# designer rather than assumed.
+const ENDLESS_UNLOCK_STAGE := 3
+
 var current_index: int = 0
 
 func _ready() -> void:
@@ -53,6 +58,17 @@ func _on_stage_cleared() -> void:
 
 func is_last_stage() -> bool:
 	return campaign == null or current_index + 1 >= campaign.stages.size()
+
+# Two independent progression gates, both read off the same persisted
+# `highest_stage_reached` rather than their own separate flags - Endless's gate
+# is a stage count, Hardcore's is "all of them," and both are just different
+# thresholds against the one number CampaignNavigator already maintains.
+func is_endless_unlocked() -> bool:
+	return SaveManager.load_high_score("highest_stage_reached") >= ENDLESS_UNLOCK_STAGE
+
+func is_campaign_complete() -> bool:
+	var stage_count: int = campaign.stages.size() if campaign != null else 0
+	return stage_count > 0 and SaveManager.load_high_score("highest_stage_reached") >= stage_count
 
 func advance_next() -> void:
 	# StageResultScreen checks is_last_stage() itself and shows the campaign-complete

@@ -6,6 +6,8 @@ class_name PauseMenu
 # PROCESS_MODE_ALWAYS so it stays interactive while the rest of the tree is frozen.
 
 const VIEWPORT_SIZE := Vector2(1600, 900)
+# Authored (inset-free) position; _apply_safe_area() offsets from this.
+const PAUSE_BUTTON_POS := Vector2(VIEWPORT_SIZE.x - 92, 28)
 const NEON := Color("22d3ff")
 const GOLD := Color("ffd23f")
 const RED := Color("ff2e5e")
@@ -15,10 +17,10 @@ const TEXT_FILL := Color("dfe3ee")
 @export var campaign_navigator: CampaignNavigator
 @export var endless_runner: EndlessRunner
 
+@export var help_bubble: HelpBubble
+
 var _pause_button: Button
 var _menu: Control
-var _countdown_bg: ColorRect
-var _countdown: Label
 var _options: OptionsPanel
 var _paused: bool = false
 var _resuming: bool = false
@@ -32,14 +34,24 @@ func _ready() -> void:
 	z_index = 100  # above all gameplay z_index usage (timer digits/signs peak at 20)
 	_build()
 	GameManager.state_changed.connect(_on_state_changed)
+	SafeArea.changed.connect(_apply_safe_area)
+	_apply_safe_area()
 	_update_pause_button_visibility(GameManager.current_state)
+
+# Top-right corner, immediately right of the Help icon - same cutout/rounded
+# corner exposure, so it's inset the same way. Only the pause button needs
+# this: the menu itself is a full-rect dim with centred content, which no
+# inset can clip.
+func _apply_safe_area() -> void:
+	_pause_button.position = PAUSE_BUTTON_POS + Vector2(-SafeArea.right, SafeArea.top)
 
 func _on_state_changed(new_state: int) -> void:
 	_update_pause_button_visibility(new_state)
 
 func _update_pause_button_visibility(state: int) -> void:
 	var in_game := state == GameManager.GameState.PLAYING or state == GameManager.GameState.ENDLESS_PLAYING
-	_pause_button.visible = in_game and not _paused
+	var bubble_open := help_bubble != null and help_bubble.is_open
+	_pause_button.visible = in_game and not _paused and not bubble_open
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not event.is_action_pressed("ui_cancel"):
@@ -58,6 +70,46 @@ func _in_game() -> bool:
 	var s := GameManager.current_state
 	return s == GameManager.GameState.PLAYING or s == GameManager.GameState.ENDLESS_PLAYING
 
+# --- App lifecycle (backgrounding, interrupts) -----------------------------
+#
+# Android can take focus away at any moment - home button, incoming call,
+# notification shade, split-screen, app switcher - and none of those give the
+# player a chance to pause first. In a game where the whole skill is stopping a
+# timer on an exact value, a run left ticking behind a backgrounded app is a
+# guaranteed loss on return, so focus loss has to pause on the player's behalf.
+#
+# Handled as one generic "focus lost" case rather than per-trigger: Android
+# surfaces all of the above through these same lifecycle notifications, so
+# there's nothing trigger-specific to branch on. APPLICATION_PAUSED is the
+# mobile "went to background" signal; the two FOCUS_OUT notifications cover
+# what steals focus without fully backgrounding (split-screen, the shade, and
+# on desktop/web alt-tab or a browser tab switch).
+#
+# Deliberately routed through pause() - the same entry point the on-screen
+# pause button and ui_cancel already use - rather than a second freeze path, so
+# the game keeps exactly one notion of "paused".
+#
+# There is deliberately no matching FOCUS_IN/APPLICATION_RESUMED handler:
+# coming back to a run that instantly resumes mid-timer, while the player is
+# still re-orienting, is precisely the loss this is meant to prevent. Returning
+# leaves the Pause Menu up, and RESUME (with its existing wipe) is the player's
+# explicit "I'm ready" - the same beat as any other unpause.
+func _notification(what: int) -> void:
+	match what:
+		NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+			_on_focus_lost()
+
+func _on_focus_lost() -> void:
+	# Notifications can arrive before _ready() has run _build(), which would
+	# reach a null _pause_button/_menu inside pause(). Cheap insurance - in
+	# practice the state guard in pause() already covers the startup window,
+	# since the game always launches into MENU.
+	if not is_node_ready():
+		return
+	# pause() already no-ops when not in gameplay and when already paused, so
+	# focus loss on a menu screen or while paused is silently ignored.
+	pause()
+
 # --- Pause / resume -------------------------------------------------------
 
 func pause() -> void:
@@ -68,19 +120,31 @@ func pause() -> void:
 	_menu.visible = true
 	get_tree().paused = true
 
+# Unified resume transition (Juice.resume_wipe): the whole menu Control (dim +
+# buttons) dissolves as one overlay, and the tree only actually unpauses once
+# that's finished - no numeral, no "get back into position" beat, just the
+# board becoming interactive again as the overlay lifts.
 func resume() -> void:
 	if not _paused or _resuming:
 		return
-	_fade_menu_out()
 	_resuming = true
-	_run_countdown()
+	for b in _menu_buttons:
+		b.disabled = true
+	await Juice.resume_wipe(_menu)
+	_menu.visible = false
+	_menu.modulate.a = 1.0
+	for b in _menu_buttons:
+		b.disabled = false
+	get_tree().paused = false
+	_paused = false
+	_resuming = false
+	_update_pause_button_visibility(GameManager.current_state)
 
-# Restart gets a straight-to-black screen fade rather than resume's 3-2-1 -
-# there's no "get back into position" moment to bridge the way there is coming
-# out of a pause, so a countdown here would just be dead time. The swap to the
-# new run happens at the black frame, so the player never sees the old board
-# get torn down and rebuilt. Fade itself lives on Juice - shared with the
-# Endless end screen's RETRY, so both read as the same beat.
+# Restart gets a straight-to-black screen fade rather than resume's wipe -
+# there's a whole run/stage being torn down and rebuilt underneath, not just an
+# overlay lifting off an unchanged board, so this needs a real content swap
+# hidden in black rather than a dissolve. Fade itself lives on Juice - shared
+# with the Endless end screen's RETRY, so both read as the same beat.
 func _on_restart() -> void:
 	if _resuming:
 		return
@@ -101,35 +165,6 @@ func _on_restart() -> void:
 	_resuming = false
 	for b in _menu_buttons:
 		b.disabled = false
-	_update_pause_button_visibility(GameManager.current_state)
-
-func _fade_menu_out() -> void:
-	# Buttons disabled up front, not after the tween - a Control's mouse_filter
-	# doesn't stop its own children from receiving clicks, so a bare visibility
-	# fade would leave the menu clickable for the whole 0.18s (mashable into a
-	# double-fire). Disabling each Button directly is what actually blocks it.
-	for b in _menu_buttons:
-		b.disabled = true
-	var tween := create_tween()
-	tween.tween_property(_menu, "modulate:a", 0.0, 0.18)
-	tween.tween_callback(func():
-		_menu.visible = false
-		_menu.modulate.a = 1.0
-		for b in _menu_buttons:
-			b.disabled = false)
-
-func _run_countdown() -> void:
-	_countdown_bg.visible = true
-	_countdown.visible = true
-	for n in [3, 2, 1]:
-		_countdown.text = str(n)
-		_pop(_countdown)
-		await get_tree().create_timer(1.0, true).timeout  # process_always -> ticks while paused
-	_countdown_bg.visible = false
-	_countdown.visible = false
-	get_tree().paused = false
-	_paused = false
-	_resuming = false
 	_update_pause_button_visibility(GameManager.current_state)
 
 func _on_title() -> void:
@@ -159,7 +194,7 @@ func _build() -> void:
 	# (notably HTML5/Web) lacks that Unicode character and shows tofu boxes.
 	_pause_button = _button("", GREY)
 	_pause_button.custom_minimum_size = Vector2(64, 64)
-	_pause_button.position = Vector2(VIEWPORT_SIZE.x - 92, 28)
+	_pause_button.position = PAUSE_BUTTON_POS
 	_pause_button.pressed.connect(pause)
 	add_child(_pause_button)
 	_build_pause_icon(_pause_button)
@@ -193,28 +228,6 @@ func _build() -> void:
 	col.add_child(_menu_button("OPTIONS", NEON, _open_options))
 	col.add_child(_menu_button("BACK TO TITLE", GREY, _on_title))
 
-	# Resume countdown overlay.
-	_countdown_bg = ColorRect.new()
-	_countdown_bg.position = Vector2.ZERO
-	_countdown_bg.size = VIEWPORT_SIZE
-	_countdown_bg.color = Color(0.02, 0.02, 0.04, 0.82)
-	_countdown_bg.visible = false
-	_countdown_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_countdown_bg)
-
-	_countdown = Label.new()
-	_countdown.add_theme_font_size_override("font_size", 200)
-	_countdown.add_theme_color_override("font_color", TEXT_FILL)
-	_countdown.add_theme_color_override("font_outline_color", NEON)
-	_countdown.add_theme_constant_override("outline_size", 8)
-	_countdown.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_countdown.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_countdown.position = Vector2.ZERO
-	_countdown.size = VIEWPORT_SIZE
-	_countdown.visible = false
-	_countdown.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_countdown)
-
 	# Options overlay (reuses OptionsPanel; closes back to the pause menu).
 	_options = preload("res://scenes/OptionsPanel.tscn").instantiate()
 	_options.standalone = false
@@ -237,12 +250,6 @@ func _build_pause_icon(button: Button) -> void:
 		)
 		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		button.add_child(bar)
-
-func _pop(node: Control) -> void:
-	node.pivot_offset = node.size * 0.5
-	node.scale = Vector2(1.4, 1.4)
-	var tween := create_tween()
-	tween.tween_property(node, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 func _menu_button(text: String, accent: Color, handler: Callable) -> Control:
 	var b := _button(text, accent)

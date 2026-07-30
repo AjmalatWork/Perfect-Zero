@@ -22,6 +22,8 @@
 [ext_resource type="PackedScene" path="res://scenes/PauseMenu.tscn" id="18_pause"]
 [ext_resource type="Script" uid="uid://bdnpqn3qjd8q1" path="res://scripts/data/TimerUnlock.gd" id="19_tunlock"]
 [ext_resource type="Script" uid="uid://drnutl3kjeod" path="res://scripts/ui/PowerupBar.gd" id="20_pwbar"]
+[ext_resource type="Script" path="res://scripts/ui/HelpBubble.gd" id="22_helpbubble"]
+[ext_resource type="PackedScene" path="res://scenes/CreditsScreen.tscn" id="23_credits"]
 
 [sub_resource type="Resource" id="TimerUnlock_normal"]
 script = ExtResource("19_tunlock")
@@ -57,7 +59,7 @@ time = 40.0
 type = 5
 weight = 6.0
 
-[node name="Main" type="Node2D" unique_id=680670716 node_paths=PackedStringArray("title_screen", "level_select", "result_screen", "help_screen", "scores_screen", "options_panel", "endless_mode_select", "endless_game", "endless_end", "gameplay_nodes")]
+[node name="Main" type="Node2D" unique_id=680670716 node_paths=PackedStringArray("title_screen", "level_select", "result_screen", "help_screen", "scores_screen", "options_panel", "endless_mode_select", "endless_game", "endless_end", "credits_screen", "gameplay_nodes")]
 script = ExtResource("4_router")
 title_screen = NodePath("TitleScreen")
 level_select = NodePath("LevelSelect")
@@ -68,6 +70,7 @@ options_panel = NodePath("OptionsPanel")
 endless_mode_select = NodePath("EndlessModeSelect")
 endless_game = NodePath("EndlessGame")
 endless_end = NodePath("EndlessEndScreen")
+credits_screen = NodePath("CreditsScreen")
 gameplay_nodes = [NodePath("TimerContainer"), NodePath("Hud")]
 
 [node name="TimerContainer" type="CenterContainer" parent="." unique_id=1841903861]
@@ -115,8 +118,11 @@ campaign_navigator = NodePath("../CampaignNavigator")
 [node name="ScoresScreen" parent="." unique_id=910025007 instance=ExtResource("12_scores")]
 campaign = ExtResource("6_campaign")
 
-[node name="EndlessModeSelect" parent="." unique_id=910025008 node_paths=PackedStringArray("runner") instance=ExtResource("14_emsel")]
+[node name="EndlessModeSelect" parent="." unique_id=910025008 node_paths=PackedStringArray("runner", "campaign_navigator") instance=ExtResource("14_emsel")]
 runner = NodePath("../EndlessRunner")
+campaign_navigator = NodePath("../CampaignNavigator")
+
+[node name="CreditsScreen" parent="." unique_id=910025019 instance=ExtResource("23_credits")]
 
 [node name="EndlessGame" type="Control" parent="." unique_id=910025009]
 layout_mode = 3
@@ -174,6 +180,12 @@ runner = NodePath("../EndlessRunner")
 [node name="OptionsPanel" parent="." unique_id=910025015 instance=ExtResource("17_opts")]
 standalone = true
 
-[node name="PauseMenu" parent="." unique_id=910025016 node_paths=PackedStringArray("campaign_navigator", "endless_runner") instance=ExtResource("18_pause")]
+[node name="HelpBubble" type="Control" parent="." unique_id=910025020 node_paths=PackedStringArray("stage_controller", "endless_runner")]
+script = ExtResource("22_helpbubble")
+stage_controller = NodePath("../StageController")
+endless_runner = NodePath("../EndlessRunner")
+
+[node name="PauseMenu" parent="." unique_id=910025016 node_paths=PackedStringArray("campaign_navigator", "endless_runner", "help_bubble") instance=ExtResource("18_pause")]
 campaign_navigator = NodePath("../CampaignNavigator")
 endless_runner = NodePath("../EndlessRunner")
+help_bubble = NodePath("../HelpBubble")

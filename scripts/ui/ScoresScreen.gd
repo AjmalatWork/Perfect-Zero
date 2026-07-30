@@ -3,6 +3,7 @@ class_name ScoresScreen
 
 const NEON := Color("22d3ff")
 const GOLD := Color("ffd23f")
+const BACK_ACCENT := NEON  # same cyan as the title screen's ARCADE button
 const TEXT_FILL := Color("dfe3ee")
 const VIEWPORT_SIZE := Vector2(1600, 900)
 
@@ -64,11 +65,22 @@ func _populate() -> void:
 	_col.add_child(_row("Endless Hardcore", str(eh) if eh > 0 else "-", "?????", false))
 
 	_col.add_child(_spacer(16))
-	var back := _button("BACK", NEON)
+	var back := _button("BACK", BACK_ACCENT)
 	back.pressed.connect(_on_back)
 	var back_wrap := CenterContainer.new()
 	back_wrap.add_child(back)
 	_col.add_child(back_wrap)
+
+# Android's system back (bridged to ui_cancel by MainScreenRouter) and desktop
+# Escape both land on the same handler the on-screen BACK button uses. Guarded
+# on the current state because hidden screens stay in the tree and would
+# otherwise all answer the same press - see LevelSelect for the full note.
+func _unhandled_input(event: InputEvent) -> void:
+	if GameManager.current_state != GameManager.GameState.SCORES:
+		return
+	if event.is_action_pressed("ui_cancel"):
+		_on_back()
+		get_viewport().set_input_as_handled()
 
 func _on_back() -> void:
 	GameManager.set_state(GameManager.GameState.MENU)

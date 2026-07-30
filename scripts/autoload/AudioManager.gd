@@ -248,7 +248,8 @@ func _music_wanted_for(state: int) -> bool:
 		GameManager.GameState.HELP, \
 		GameManager.GameState.SCORES, \
 		GameManager.GameState.ENDLESS_MODE_SELECT, \
-		GameManager.GameState.OPTIONS:
+		GameManager.GameState.OPTIONS, \
+		GameManager.GameState.CREDITS:
 			return true
 	return false
 
@@ -499,6 +500,19 @@ func play_new_best() -> void:
 		_play(_get_arpeggio(NEW_BEST_RUN, 0.1, 0.4))
 	else:
 		_play(_get_punchy_sequence(NEW_BEST_RUN, 0.1, 0.4, 4.5, 0.4))
+
+# Unlocking a whole mode (Endless at Stage 3, Hardcore at full completion) is a
+# different kind of news from a personal best - "new content available" rather
+# than "you beat your own record" - so it gets its own sound rather than reusing
+# play_new_best(). A wide, rising open-fifth-plus-octave sweep, brighter/more
+# expansive than the tighter run-of-notes NEW_BEST_RUN uses.
+const UNLOCK_CHORD := [392.0, 587.33, 784.0, 1046.5]
+
+func play_unlock() -> void:
+	if USE_LEGACY_ONESHOT_SFX:
+		_play(_get_chord(UNLOCK_CHORD, 0.8, 0.42))
+	else:
+		_play(_get_punchy(UNLOCK_CHORD, 0.8, 0.42, 2.2, 0.3, 1.4, 0.3))
 
 func play_stage_clear() -> void:
 	if USE_LEGACY_ONESHOT_SFX:

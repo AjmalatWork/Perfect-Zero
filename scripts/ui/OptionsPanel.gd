@@ -11,6 +11,7 @@ const VIEWPORT_SIZE := Vector2(1600, 900)
 const NEON := Color("22d3ff")
 const RED := Color("ff2e5e")
 const GOLD := Color("ffd23f")
+const BACK_ACCENT := NEON  # same cyan as the title screen's ARCADE button
 const TEXT_FILL := Color("dfe3ee")
 
 @export var standalone: bool = false  # true when used as a Title screen
@@ -72,12 +73,48 @@ func _build() -> void:
 	reset.pressed.connect(_on_reset_pressed)
 	col.add_child(_wrap(reset))
 
-	# Back / close.
-	var back := _button("BACK", GOLD)
+	# Back / close. Sized to match every other screen's BACK button (200x64) -
+	# _button() defaults to 240x64 for this panel's other buttons (Reset Save
+	# Data), so the size is overridden after creation here.
+	var back := _button("BACK", BACK_ACCENT)
+	back.custom_minimum_size = Vector2(200, 64)
 	back.pressed.connect(_on_back)
 	col.add_child(_wrap(back))
 
 	_build_confirm_overlay()
+
+# Android's system back (bridged to ui_cancel by MainScreenRouter) and desktop
+# Escape. Two OptionsPanel instances exist in the tree at once - the standalone
+# title-screen one and the pause menu's overlay copy - so this has to work out
+# which (if either) is actually live before answering a press.
+#
+# Ownership is deliberately split with PauseMenu rather than duplicated: the
+# overlay copy is a *child* of PauseMenu, and _unhandled_input runs children
+# first, so this gets first refusal on the press and hands the rest back.
+#   - Confirm prompt open (either mode): this closes the prompt and consumes
+#     the press, so back can never blow past a destructive "erase everything?"
+#     step straight out of the panel.
+#   - Otherwise, standalone: closes the panel via the same _on_back() the
+#     on-screen BACK button uses.
+#   - Otherwise, overlay mode: deliberately left unconsumed for PauseMenu's own
+#     handler, which already owns closing options back to the pause menu.
+func _unhandled_input(event: InputEvent) -> void:
+	if not event.is_action_pressed("ui_cancel"):
+		return
+	if standalone:
+		if GameManager.current_state != GameManager.GameState.OPTIONS:
+			return
+	elif not visible:
+		return
+
+	if _confirm_overlay.visible:
+		_confirm_overlay.visible = false
+		get_viewport().set_input_as_handled()
+		return
+
+	if standalone:
+		_on_back()
+		get_viewport().set_input_as_handled()
 
 func _on_back() -> void:
 	closed.emit()

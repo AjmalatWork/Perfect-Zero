@@ -92,6 +92,14 @@ class PowerupButton extends Control:
 	var _name_label: Label
 	var _cd_label: Label
 	var _was_cooling: bool = false
+	# Last idle snapshot this button actually redrew for. Powerups.state_changed
+	# fires once for the whole bar whenever ANY of the three powerups moves, so
+	# without this every button repaints on every tick of any one cooldown -
+	# three redraws (plus three icon redraws) a frame for two buttons that are
+	# just sitting there unchanged. Only meaningful while genuinely idle (not
+	# cooling, not active): mid-cooldown/active state still refreshes every
+	# call, since the ring/bar geometry is animating and has to.
+	var _last_idle_ready: Variant = null
 
 	func configure(p_kind: int) -> void:
 		kind = p_kind
@@ -150,6 +158,18 @@ class PowerupButton extends Control:
 		var ready_now := Powerups.can_activate(kind)
 		var active := Powerups.is_active(kind)
 		var cd := Powerups.cooldown_seconds(kind)
+		var cooling := cd > 0.0
+
+		# Idle and unchanged since the last redraw: nothing on this button would
+		# paint any differently, so skip it - the pulse check below still needs
+		# _was_cooling kept current regardless.
+		if not active and not cooling and _last_idle_ready == ready_now:
+			_was_cooling = false
+			return
+		if not active and not cooling:
+			_last_idle_ready = ready_now
+		else:
+			_last_idle_ready = null  # invalidated - next idle frame must redraw once
 
 		if active:
 			# Running: full brightness plus a lifted glow, so an armed Shield or a
@@ -176,7 +196,6 @@ class PowerupButton extends Control:
 		# only noticed on inspection. Gated on ready_now (which is false while
 		# disarmed) so the end-of-run reset, which also drops cd to zero, can't
 		# fire three spurious pulses on the way out.
-		var cooling := cd > 0.0
 		if _was_cooling and not cooling and ready_now:
 			play_ready_pulse()
 		_was_cooling = cooling

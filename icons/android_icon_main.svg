@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+<!--Legacy/fallback launcher icon (pre-adaptive-icon launchers). Same panel +
+    "0.00" mark as the desktop icon.svg, but the mark is rebuilt as vector
+    rings/circles instead of <text> - Godot's runtime SVG rasterizer (thorvg)
+    doesn't render <text> elements, confirmed earlier this session when a
+    text-based icon came out blank in-game. No glow filter either, for the
+    same reason: thorvg's feGaussianBlur/feMerge blurs the whole composite
+    rather than adding a soft halo behind a crisp shape.-->
+  <rect x="8" y="8" width="176" height="176" rx="32" fill="#0b0d16"/>
+  <rect x="8" y="8" width="176" height="176" rx="32" fill="none" stroke="#22d3ff" stroke-width="5"/>
+<!--"0.00", drawn as two ring digits + a dot + one more ring digit. Rings
+    sized ~15% larger than the original pass, per feedback.-->
+  <path fill-rule="evenodd" stroke="#22d3ff" stroke-width="2" fill="#ffffff"
+        d="M22,96 A17,23 0 1,0 56,96 A17,23 0 1,0 22,96 Z
+           M31,96 A8,15 0 1,0 47,96 A8,15 0 1,0 31,96 Z"/>
+  <circle cx="73" cy="112" r="6" fill="#ffffff" stroke="#22d3ff" stroke-width="2"/>
+  <path fill-rule="evenodd" stroke="#22d3ff" stroke-width="2" fill="#ffffff"
+        d="M91,96 A17,23 0 1,0 125,96 A17,23 0 1,0 91,96 Z
+           M100,96 A8,15 0 1,0 116,96 A8,15 0 1,0 100,96 Z"/>
+  <path fill-rule="evenodd" stroke="#22d3ff" stroke-width="2" fill="#ffffff"
+        d="M137,96 A17,23 0 1,0 171,96 A17,23 0 1,0 137,96 Z
+           M146,96 A8,15 0 1,0 162,96 A8,15 0 1,0 146,96 Z"/>
+</svg>

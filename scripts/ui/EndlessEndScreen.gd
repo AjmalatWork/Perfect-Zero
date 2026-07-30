@@ -304,8 +304,25 @@ func _build_buttons() -> void:
 	_button_row.add_child(_retry_button)
 
 	_back_button = _button("BACK TO TITLE", GOLD)
-	_back_button.pressed.connect(func(): GameManager.set_state(GameManager.GameState.MENU))
+	_back_button.pressed.connect(_on_back)
 	_button_row.add_child(_back_button)
+
+# Android's system back (bridged to ui_cancel by MainScreenRouter) and desktop
+# Escape both land on the same handler the on-screen BACK TO TITLE button uses.
+# Guarded on the current state because hidden screens stay in the tree (see
+# LevelSelect for the full note), and on _transitioning so a back press can't
+# race a RETRY that is already tearing the run down behind the fade.
+func _unhandled_input(event: InputEvent) -> void:
+	if GameManager.current_state != GameManager.GameState.ENDLESS_END:
+		return
+	if event.is_action_pressed("ui_cancel"):
+		_on_back()
+		get_viewport().set_input_as_handled()
+
+func _on_back() -> void:
+	if _transitioning:
+		return
+	GameManager.set_state(GameManager.GameState.MENU)
 
 # Same fade-to-black-and-back as the pause menu's RESTART (shared via
 # Juice.run_transition), so "tear down this run and start a fresh one" reads

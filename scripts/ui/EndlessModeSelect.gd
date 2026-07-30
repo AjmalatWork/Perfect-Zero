@@ -5,9 +5,18 @@ const VIEWPORT_SIZE := Vector2(1600, 900)
 const NEON := Color("22d3ff")
 const RED := Color("ff2e5e")
 const GOLD := Color("ffd23f")
+const LOCKED_ACCENT := Color("8b90a8")
 const TEXT_FILL := Color("dfe3ee")
 
 @export var runner: EndlessRunner
+@export var campaign_navigator: CampaignNavigator
+
+var _hardcore_button: Button
+# The powerup primer's own CanvasLayer while it's up, else null. Tracked because
+# a CanvasLayer isn't a CanvasItem: hiding this screen does not hide it, so any
+# exit taken while it's open has to free it explicitly - the same reason
+# TutorialManager tracks its own popup layer.
+var _tutorial_layer: CanvasLayer
 
 func _ready() -> void:
 	position = Vector2.ZERO
@@ -16,14 +25,12 @@ func _ready() -> void:
 	_build()
 	GameManager.state_changed.connect(_on_state_changed)
 
-# The powerup primer fires the first time Endless is opened - here rather than
-# at run start so the player reads it before committing to a mode, and can still
-# see the board unobstructed once the run actually begins.
 func _on_state_changed(new_state: int) -> void:
 	if new_state != GameManager.GameState.ENDLESS_MODE_SELECT:
 		return
-	if PowerupTutorial.is_new():
-		PowerupTutorial.show_popup(self)
+	# Re-evaluated on every visit (not just once at _ready) since campaign
+	# progress made elsewhere can unlock this between visits to this screen.
+	_style_hardcore_lock()
 
 func _build() -> void:
 	var backdrop := ColorRect.new()
@@ -53,15 +60,85 @@ func _build() -> void:
 	normal.pressed.connect(func(): _start(3))
 	col.add_child(_wrap(normal))
 
-	var hardcore := _button("HARDCORE   -   1 life", RED)
-	hardcore.pressed.connect(func(): _start(1))
-	col.add_child(_wrap(hardcore))
+	_hardcore_button = _button("HARDCORE   -   1 life", RED)
+	col.add_child(_wrap(_hardcore_button))
 
-	var back := _button("BACK", GOLD)
-	back.pressed.connect(func(): GameManager.set_state(GameManager.GameState.MENU))
+	# Sized and colored to match every other screen's BACK button (200x64,
+	# same cyan as the title screen's ARCADE button) rather than the mode
+	# buttons' own 420x76 - _button() is shared with those, so the size is
+	# overridden after creation here.
+	var back := _button("BACK", NEON)
+	back.custom_minimum_size = Vector2(200, 64)
+	back.pressed.connect(_on_back)
 	col.add_child(_wrap(back))
 
+# Android's system back (bridged to ui_cancel by MainScreenRouter) and desktop
+# Escape both land on the same handler the on-screen BACK button uses. Guarded
+# on the current state because hidden screens stay in the tree and would
+# otherwise all answer the same press - see LevelSelect for the full note.
+func _unhandled_input(event: InputEvent) -> void:
+	if GameManager.current_state != GameManager.GameState.ENDLESS_MODE_SELECT:
+		return
+	if event.is_action_pressed("ui_cancel"):
+		_on_back()
+		get_viewport().set_input_as_handled()
+
+func _on_back() -> void:
+	# With the powerup primer up, back closes the primer and stays here rather
+	# than leaving the screen - that's the real "one level up" from a modal, and
+	# it avoids stranding the primer's CanvasLayer over the title screen. The
+	# run it was gating deliberately does not start, and it's left unmarked in
+	# the save so it shows again next time instead of being silently skipped.
+	if _tutorial_layer != null and is_instance_valid(_tutorial_layer):
+		_tutorial_layer.queue_free()
+		_tutorial_layer = null
+		return
+	GameManager.set_state(GameManager.GameState.MENU)
+
+# A separate, later gate than the title screen's ENDLESS lock - reaching this
+# screen at all already means Stage 3 is cleared; Hardcore specifically needs
+# the *whole* campaign, tracked via CampaignNavigator.is_campaign_complete()
+# rather than a second flag of its own.
+func _style_hardcore_lock() -> void:
+	if _hardcore_button == null:
+		return
+	if _hardcore_button.pressed.is_connected(_start_hardcore):
+		_hardcore_button.pressed.disconnect(_start_hardcore)
+	if _hardcore_button.pressed.is_connected(_on_locked_hardcore_tapped):
+		_hardcore_button.pressed.disconnect(_on_locked_hardcore_tapped)
+
+	if campaign_navigator != null and campaign_navigator.is_campaign_complete():
+		_hardcore_button.modulate = Color.WHITE
+		_style_button(_hardcore_button, RED)
+		_hardcore_button.pressed.connect(_start_hardcore)
+	else:
+		_hardcore_button.modulate = Color(1, 1, 1, 0.45)
+		_style_button(_hardcore_button, LOCKED_ACCENT)
+		# Left enabled (not .disabled) so it can still receive the tap that
+		# shows the toast - a disabled Button eats input instead of firing
+		# `pressed`, same reasoning as the title screen's locked ENDLESS button.
+		_hardcore_button.pressed.connect(_on_locked_hardcore_tapped)
+
+func _start_hardcore() -> void:
+	_start(1)
+
+func _on_locked_hardcore_tapped() -> void:
+	Toast.show(self, "Complete all Arcade stages to unlock", LOCKED_ACCENT)
+
+# The powerup primer fires on the actual mode choice (Normal or Hardcore),
+# never on merely opening this screen - so a player who backs out without
+# picking either never sees it, and it always lands right before the run it's
+# actually describing rather than ahead of a screen the player might bounce off.
 func _start(lives: int) -> void:
+	if PowerupTutorial.is_new():
+		_tutorial_layer = PowerupTutorial.show_popup(self, _on_tutorial_dismissed.bind(lives))
+	else:
+		runner.start_run(lives)
+
+func _on_tutorial_dismissed(lives: int) -> void:
+	# PowerupTutorial frees its own layer on GOT IT; this just drops the handle
+	# so _on_back() can't try to free it a second time.
+	_tutorial_layer = null
 	runner.start_run(lives)
 
 func _wrap(c: Control) -> Control:
@@ -85,14 +162,19 @@ func _button(text: String, accent: Color) -> Button:
 	button.text = text
 	button.custom_minimum_size = Vector2(420, 76)
 	button.add_theme_font_size_override("font_size", 30)
+	_style_button(button, accent)
+	PressFeedback.apply(button)
+	return button
+
+# Split out from _button() so the Hardcore lock can re-skin an already-built
+# button (accent swap between RED and LOCKED_ACCENT) without rebuilding it.
+func _style_button(button: Button, accent: Color) -> void:
 	button.add_theme_color_override("font_color", Color.WHITE)
 	button.add_theme_color_override("font_outline_color", accent)
 	button.add_theme_constant_override("outline_size", 4)
 	button.add_theme_stylebox_override("normal", _box(accent, 0.85))
 	button.add_theme_stylebox_override("hover", _box(accent, 0.7))
 	button.add_theme_stylebox_override("pressed", _box(accent, 0.6))
-	PressFeedback.apply(button)
-	return button
 
 func _box(accent: Color, darken: float) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()

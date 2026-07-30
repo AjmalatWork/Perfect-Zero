@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+<!--ring-->
+  <circle cx="128" cy="128" r="96" fill="#ffd23f" fill-opacity="0.14"/>
+  <circle cx="128" cy="128" r="96" fill="none" stroke="#ffd23f" stroke-width="14"/>
+<!--"i" - translucent-body pass under a solid-boundary pass, same technique
+    as the question mark's hook, instead of a flat solid white mark-->
+  <circle cx="128" cy="76" r="22" fill="#ffffff" fill-opacity="0.16"/>
+  <circle cx="128" cy="76" r="14" fill="#ffffff"/>
+  <path d="M128,104 L128,178" fill="none" stroke="#ffffff" stroke-opacity="0.16"
+        stroke-width="34" stroke-linecap="round"/>
+  <path d="M128,104 L128,178" fill="none" stroke="#ffffff" stroke-width="12"
+        stroke-linecap="round"/>
+</svg>

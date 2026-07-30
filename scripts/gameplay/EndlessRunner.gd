@@ -200,6 +200,46 @@ func _spawn_timer(cell: int, type: int, start_value: float) -> void:
 	if type != TimerData.TimerType.NORMAL:
 		_time_since_colored = 0.0
 
+	_maybe_show_first_seen_callout(slot, type)
+
+# Extends the same first-seen-type flag system Arcade's TutorialManager already
+# drives (data-driven off stage contents there; off the live spawn here) rather
+# than building a second tracking system. Deliberately non-blocking and
+# non-freezing - unlike TutorialManager's modal (which gates a stage that hasn't
+# started yet) and HelpBubble's freeze (an explicit player request to pause and
+# read), this fires mid-run on a board that's still live, so stopping the clock
+# for it would be a much bigger interruption than the callout itself.
+const FIRST_SEEN_CALLOUT_HOLD := 2.4
+const FIRST_SEEN_CALLOUT_FADE := 0.4
+
+func _maybe_show_first_seen_callout(slot: TimerSlot, type: int) -> void:
+	var key := "seen_type_%d" % type
+	if SaveManager.load_high_score(key) != 0:
+		return
+	# Set immediately on trigger, not on dismissal - a player who never looks at
+	# it (or quits mid-run) still shouldn't see it re-trigger on the next spawn.
+	SaveManager.save_high_score(key, 1)
+
+	var label := Label.new()
+	label.text = "NEW: %s" % TimerTypeInfo.name_of(type)
+	label.add_theme_font_size_override("font_size", 20)
+	label.add_theme_color_override("font_color", Color.WHITE)
+	label.add_theme_color_override("font_outline_color", TimerTypeInfo.color_of(type))
+	label.add_theme_constant_override("outline_size", 4)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.z_index = 20
+	label.size = Vector2(cell_size + 60.0, 30)
+	label.position = Vector2(-30.0, -34.0)
+	label.modulate.a = 0.0
+	slot.add_child(label)
+
+	var tween := slot.create_tween()
+	tween.tween_property(label, "modulate:a", 1.0, 0.2)
+	tween.tween_interval(FIRST_SEEN_CALLOUT_HOLD)
+	tween.tween_property(label, "modulate:a", 0.0, FIRST_SEEN_CALLOUT_FADE)
+	tween.tween_callback(label.queue_free)
+
 # --- Escalation -----------------------------------------------------------
 
 func _max_simultaneous() -> float:

@@ -60,6 +60,18 @@ func start_stage(stage_data: StageData, reset_base: bool = true) -> void:
 
 	GameManager.set_state(GameManager.GameState.PLAYING)
 
+# The distinct timer types the current stage actually contains - read by
+# HelpBubble's new-type badge, which needs to know what's "spawn-eligible" in
+# Arcade the same way EndlessRunner's type_unlocks answers it for Endless.
+func current_stage_timer_types() -> Array[int]:
+	var out: Array[int] = []
+	if _active_stage_data == null:
+		return out
+	for td in _active_stage_data.timers:
+		if td != null and not out.has(td.timer_type):
+			out.append(td.timer_type)
+	return out
+
 func _clear_slots() -> void:
 	# Free the row containers (which frees the timers inside them).
 	for child in timer_container.get_children():

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+<!--hook: the same curve that already read correctly as a "?" before the
+    annulus redesign broke it - now given a translucent-body pass under a
+    solid-boundary pass (same visual effect as the other icons' fill+stroke
+    pairing) instead of switching to a different shape-->
+  <path d="M76,72 C76,30 116,10 152,22 C192,35 202,80 174,110 C158,128 136,132 133,158"
+        fill="none" stroke="#ffd23f" stroke-opacity="0.16" stroke-width="36"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M76,72 C76,30 116,10 152,22 C192,35 202,80 174,110 C158,128 136,132 133,158"
+        fill="none" stroke="#ffd23f" stroke-width="12" stroke-linecap="round"
+        stroke-linejoin="round"/>
+<!--dot-->
+  <circle cx="128" cy="214" r="20" fill="#ffd23f"/>
+</svg>

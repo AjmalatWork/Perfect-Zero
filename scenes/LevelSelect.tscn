@@ -14,6 +14,11 @@ layout_mode = 0
 offset_right = 1600.0
 offset_bottom = 900.0
 
-[node name="Grid" type="GridContainer" parent="Center"]
+[node name="Col" type="VBoxContainer" parent="Center"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 24
+
+[node name="Grid" type="GridContainer" parent="Center/Col"]
 layout_mode = 2
 columns = 3

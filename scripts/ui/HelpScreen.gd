@@ -4,16 +4,14 @@ class_name HelpScreen
 const NEON := Color("22d3ff")
 const GOLD := Color("ffd23f")
 const GREEN := Color("39ff9e")
+const BACK_ACCENT := NEON  # same cyan as the title screen's ARCADE button
 const TEXT_FILL := Color("dfe3ee")
 const VIEWPORT_SIZE := Vector2(1600, 900)
 
 const PAGE_COUNT := 3
 
 var _pages: Array[Control] = []
-var _page_index: int = 0
-var _page_label: Label
-var _prev_button: Button
-var _next_button: Button
+var _page_nav: PageNav
 
 func _ready() -> void:
 	_build()
@@ -69,15 +67,16 @@ func _build() -> void:
 	nav_spacer.custom_minimum_size = Vector2(0, 18)
 	outer.add_child(nav_spacer)
 
-	outer.add_child(_build_nav_row())
+	_page_nav = PageNav.new()
+	_page_nav.page_changed.connect(_on_page_changed)
+	outer.add_child(_page_nav)
+	_page_nav.configure(PAGE_COUNT)
 
-	var back := _button("BACK", NEON)
+	var back := _button("BACK", BACK_ACCENT)
 	back.pressed.connect(_on_back)
 	var back_wrap := CenterContainer.new()
 	back_wrap.add_child(back)
 	outer.add_child(back_wrap)
-
-	_show_page(0)
 
 # --- Page 1: how to play + timer types -------------------------------------
 
@@ -179,32 +178,20 @@ func _build_page_3() -> Control:
 
 # --- Page navigation ---------------------------------------------------------
 
-func _build_nav_row() -> Control:
-	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 32)
-
-	_prev_button = _nav_button("< PREV", GOLD)
-	_prev_button.pressed.connect(func(): _show_page(_page_index - 1))
-	row.add_child(_prev_button)
-
-	_page_label = _line("1 / %d" % PAGE_COUNT, 24, TEXT_FILL)
-	_page_label.custom_minimum_size = Vector2(100, 0)
-	row.add_child(_page_label)
-
-	_next_button = _nav_button("NEXT >", GOLD)
-	_next_button.pressed.connect(func(): _show_page(_page_index + 1))
-	row.add_child(_next_button)
-
-	return row
-
-func _show_page(index: int) -> void:
-	_page_index = clampi(index, 0, PAGE_COUNT - 1)
+func _on_page_changed(index: int) -> void:
 	for i in range(_pages.size()):
-		_pages[i].visible = i == _page_index
-	_page_label.text = "%d / %d" % [_page_index + 1, PAGE_COUNT]
-	_prev_button.disabled = _page_index == 0
-	_next_button.disabled = _page_index == PAGE_COUNT - 1
+		_pages[i].visible = i == index
+
+# Android's system back (bridged to ui_cancel by MainScreenRouter) and desktop
+# Escape both land on the same handler the on-screen BACK button uses. Guarded
+# on the current state because hidden screens stay in the tree and would
+# otherwise all answer the same press - see LevelSelect for the full note.
+func _unhandled_input(event: InputEvent) -> void:
+	if GameManager.current_state != GameManager.GameState.HELP:
+		return
+	if event.is_action_pressed("ui_cancel"):
+		_on_back()
+		get_viewport().set_input_as_handled()
 
 func _on_back() -> void:
 	GameManager.set_state(GameManager.GameState.MENU)
@@ -282,13 +269,6 @@ func _button(text: String, accent: Color) -> Button:
 	button.add_theme_stylebox_override("hover", _box(accent, 0.7))
 	button.add_theme_stylebox_override("pressed", _box(accent, 0.6))
 	PressFeedback.apply(button)
-	return button
-
-func _nav_button(text: String, accent: Color) -> Button:
-	var button := _button(text, accent)
-	button.custom_minimum_size = Vector2(160, 56)
-	button.add_theme_font_size_override("font_size", 24)
-	button.add_theme_stylebox_override("disabled", _box(accent, 0.93))
 	return button
 
 func _box(accent: Color, darken: float) -> StyleBoxFlat:

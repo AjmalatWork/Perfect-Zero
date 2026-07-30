@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+<!--cog silhouette with a bored hub hole (evenodd). No glow filter - Godot's
+    runtime SVG rasterizer (thorvg) doesn't composite feGaussianBlur/feMerge
+    the way a browser does, and it was blurring the whole icon rather than
+    adding a soft halo. The button's own border/shadow already supplies the
+    glow, so the icon itself just needs to be crisp.-->
+  <path fill-rule="evenodd"
+        d="M128,28 L157,58 L199,57 L198,99 L228,128 L198,157 L199,199 L157,198 L128,228 L99,198 L57,199 L58,157 L28,128 L58,99 L57,57 L99,58 Z
+           M168,128 A40,40 0 1,0 88,128 A40,40 0 1,0 168,128 Z"
+        fill="#ffd23f" fill-opacity="0.16"/>
+  <path fill-rule="evenodd"
+        d="M128,28 L157,58 L199,57 L198,99 L228,128 L198,157 L199,199 L157,198 L128,228 L99,198 L57,199 L58,157 L28,128 L58,99 L57,57 L99,58 Z
+           M168,128 A40,40 0 1,0 88,128 A40,40 0 1,0 168,128 Z"
+        fill="none" stroke="#ffd23f" stroke-width="14" stroke-linejoin="round"/>
+</svg>

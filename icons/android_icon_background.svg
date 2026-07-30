@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="432" viewBox="0 0 432 432">
+<!--Adaptive icon background layer. Plain full-bleed fill, deliberately no
+    rounded corners or border here - the OS applies its own mask shape
+    (circle/squircle/rounded-square vary by launcher), so anything drawn at
+    this layer's own edges would fight that mask rather than sit behind it.
+    The panel look lives on the Main legacy icon instead.-->
+  <rect width="432" height="432" fill="#0b0d16"/>
+</svg>

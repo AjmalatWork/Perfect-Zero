@@ -479,6 +479,19 @@ func _finish_clear(stage_score: int) -> void:
 	if is_new_best:
 		_play_new_best_flourish()
 
+	# Fires once ever, the moment Stage 3 (CampaignNavigator.ENDLESS_UNLOCK_STAGE)
+	# is cleared - layered on top of the normal reveal exactly like NEW BEST is,
+	# rather than replacing anything above. Staggered behind it (not simultaneous)
+	# since Stage 3 being cleared for the first time is very plausibly also this
+	# stage's first-ever best, and the two flourishes would otherwise land on the
+	# same beat and blur together.
+	if index + 1 == CampaignNavigator.ENDLESS_UNLOCK_STAGE \
+			and SaveManager.load_high_score("endless_unlock_seen") == 0:
+		SaveManager.save_high_score("endless_unlock_seen", 1)
+		if is_new_best:
+			await get_tree().create_timer(0.9, true, false, true).timeout
+		_play_unlock_banner("ENDLESS MODE UNLOCKED!")
+
 # A secondary "oh, and also" beat, deliberately kept out of the finale's
 # package: no hit-stop, no camera punch, no colour wash. Those belong to the
 # score reveal itself, and folding this into them would make a record read as
@@ -515,6 +528,75 @@ func _play_new_best_flourish() -> void:
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 	AudioManager.play_new_best()
+
+# A one-time, whole-mode announcement (Endless at Stage 3, Hardcore at full
+# completion) - deliberately its own popup rather than reusing the small corner
+# NEW BEST badge above (the two can legitimately fire on the same clear - see
+# the caller), since unlocking a mode is a bigger deal than one stage's record.
+#
+# A closable modal rather than a transient banner: an earlier version was a
+# floating label that auto-faded over the score/buttons underneath, which had
+# nowhere else to sit on a screen already using that space and gave the player
+# no way to linger on it or dismiss it early. Same dim+panel+button language
+# TutorialManager/PowerupTutorial already use elsewhere, which also means it
+# naturally blocks clicks to RETRY/NEXT STAGE underneath while it's up, instead
+# of the two overlapping.
+func _play_unlock_banner(text: String) -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 35  # above this screen's own content, below PauseMenu (100)
+	add_child(layer)
+
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0, 0, 0, 0.72)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	layer.add_child(dim)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(center)
+
+	var panel := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color("0f1118")
+	sb.set_corner_radius_all(16)
+	sb.set_border_width_all(3)
+	sb.border_color = GOLD
+	sb.set_content_margin_all(32)
+	sb.shadow_color = Color(GOLD.r, GOLD.g, GOLD.b, 0.4)
+	sb.shadow_size = 18
+	panel.add_theme_stylebox_override("panel", sb)
+	center.add_child(panel)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 22)
+	col.custom_minimum_size = Vector2(560, 0)
+	panel.add_child(col)
+
+	var label := _make_label(38, GOLD.darkened(0.15))
+	label.text = text
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(label)
+
+	var nice := Button.new()
+	nice.text = "NICE!"
+	nice.custom_minimum_size = Vector2(200, 64)
+	nice.add_theme_font_size_override("font_size", 28)
+	nice.add_theme_color_override("font_color", Color.WHITE)
+	nice.add_theme_color_override("font_outline_color", GOLD)
+	nice.add_theme_constant_override("outline_size", 4)
+	nice.add_theme_stylebox_override("normal", _make_box(GOLD, 0.85, 0.35, 8))
+	nice.add_theme_stylebox_override("hover", _make_box(GOLD, 0.7, 0.5, 12))
+	nice.add_theme_stylebox_override("pressed", _make_box(GOLD, 0.6, 0.4, 6))
+	PressFeedback.apply(nice)
+	nice.pressed.connect(layer.queue_free)
+	var nice_wrap := CenterContainer.new()
+	nice_wrap.add_child(nice)
+	col.add_child(nice_wrap)
+
+	AudioManager.play_unlock()
+	Juice.punch(1.6)
 
 # Parked just outside the centred column's right edge, level with the top of
 # the score rather than its centre - lifted clear of both the number itself and
@@ -808,6 +890,25 @@ func _build_buttons(cleared: bool) -> void:
 		_add_button(_button_row, "RETRY", NEON, _on_retry)
 	_add_button(_title_row, "BACK TO TITLE", Color("8b90a8"), _on_title)
 
+# Android's system back (bridged to ui_cancel by MainScreenRouter) and desktop
+# Escape both land on _on_title(), the same handler the on-screen BACK TO TITLE
+# button uses - including while the tally is still counting up and that button
+# hasn't appeared yet. A back press that silently does nothing reads as a hung
+# app, and "leave this screen" is a legitimate intent at any point in the
+# reveal; _leave_with_outro() already guards against re-entry.
+#
+# Guarded on the current state because hidden screens stay in the tree - see
+# LevelSelect for the full note. This does not collide with the tally's own
+# skip handler (_input, above): that one only matches mouse-left and ui_accept,
+# and is inert outside the tally window anyway.
+func _unhandled_input(event: InputEvent) -> void:
+	var s := GameManager.current_state
+	if s != GameManager.GameState.STAGE_CLEAR and s != GameManager.GameState.FAIL:
+		return
+	if event.is_action_pressed("ui_cancel"):
+		_on_title()
+		get_viewport().set_input_as_handled()
+
 # Both non-RETRY exits play the tier outro: either is "leaving the result
 # screen", which is what the effect is echoing. RETRY deliberately does not -
 # see _on_retry.
@@ -884,6 +985,14 @@ func _show_campaign_complete() -> void:
 	_headline.add_theme_color_override("font_outline_color", GOLD.darkened(0.4))
 
 	_add_button(_title_row, "BACK TO TITLE", GOLD, _on_finish)
+
+	# Fires once ever, the moment the full campaign is completed - layered onto
+	# this screen the same way the Endless-unlock flourish layers onto Stage 3's
+	# clear, confirmed with the designer as its own distinct beat rather than
+	# folded silently into the completion message above.
+	if SaveManager.load_high_score("hardcore_unlock_seen") == 0:
+		SaveManager.save_high_score("hardcore_unlock_seen", 1)
+		_play_unlock_banner("HARDCORE UNLOCKED!")
 
 func _on_finish() -> void:
 	print("Campaign complete!")

@@ -12,11 +12,14 @@ config_version=5
 
 config/name="Perfect Zero"
 run/main_scene="uid://clurv1c27t1al"
+config/quit_on_go_back=false
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
 
 [autoload]
 
+ErrorLog="*res://scripts/autoload/ErrorLog.gd"
+SafeArea="*res://scripts/autoload/SafeArea.gd"
 EventBus="*uid://bs1o67gvu0low"
 GameManager="*uid://bik75xn8nh1o3"
 ScoreManager="*uid://rrxkidk37r3f"
@@ -42,4 +45,5 @@ window/stretch/aspect="expand"
 rendering_device/driver.windows="d3d12"
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true
 environment/defaults/default_clear_color=Color(0.043137, 0.043137, 0.070588, 1)

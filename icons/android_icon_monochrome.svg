@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="432" viewBox="0 0 432 432">
+<!--Adaptive icon monochrome layer (Android 13+ themed/Material You icons).
+    The OS recolors this to the system theme color, so only the silhouette's
+    alpha matters - solid white shapes on transparent, no other color
+    information, same geometry/safe-zone as android_icon_foreground.svg so
+    the themed icon reads as the same mark.
+
+    The "clipping" seen earlier wasn't actually this file - the export
+    preset's Launcher Icons fields were left empty, so Godot was silently
+    falling back to the project's default icon.svg (a big rounded panel with
+    no safe-zone margin at all) for every launcher-icon slot. This file was
+    never actually being read. Back to this size (~22px of safe-zone margin)
+    now that the fields are correctly assigned.-->
+  <path fill-rule="evenodd" fill="#ffffff"
+        d="M106,216 A25,34 0 1,0 156,216 A25,34 0 1,0 106,216 Z
+           M119,216 A12,22 0 1,0 143,216 A12,22 0 1,0 119,216 Z"/>
+  <circle cx="182" cy="239" r="9" fill="#ffffff"/>
+  <path fill-rule="evenodd" fill="#ffffff"
+        d="M209,216 A25,34 0 1,0 259,216 A25,34 0 1,0 209,216 Z
+           M222,216 A12,22 0 1,0 246,216 A12,22 0 1,0 222,216 Z"/>
+  <path fill-rule="evenodd" fill="#ffffff"
+        d="M276,216 A25,34 0 1,0 326,216 A25,34 0 1,0 276,216 Z
+           M289,216 A12,22 0 1,0 313,216 A12,22 0 1,0 289,216 Z"/>
+</svg>

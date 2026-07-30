@@ -222,6 +222,15 @@ func register_stage(node: Node2D) -> void:
 	_build_low_life_vignette()
 	_build_aberration()
 
+# Repoints what "rest position" shake/punch settle back to - called by
+# MainScreenRouter when it recenters Main for pillarboxing on a wider-than-1600x900
+# viewport. _process() below reapplies _base_position (plus whatever shake/punch
+# is live) every single frame regardless of gameplay state, so setting Main's
+# position directly anywhere else would just get overwritten on the very next
+# frame - this is the only correct way to move Main's rest position.
+func recenter(base_position: Vector2) -> void:
+	_base_position = base_position
+
 # --- Public API -----------------------------------------------------------
 
 # Freeze-frames are the most disorienting effect here, so reduce_intensity skips
@@ -1097,3 +1106,24 @@ func run_transition(on_black: Callable) -> void:
 	in_tween.tween_property(_transition_rect, "modulate:a", 0.0, TRANSITION_FADE_SEC)
 	await in_tween.finished
 	_transition_rect.visible = false
+
+# --- Unified resume transition ----------------------------------------------
+# Replaces the old 3-2-1 numeric countdown for "leaving an overlay back into
+# live play" - a single shared implementation so the Pause Menu's RESUME and the
+# Help bubble's close both read as the exact same beat rather than two
+# hand-rolled fades that could drift apart. Deliberately a dissolve of the
+# overlay itself, not a cut-to-black-and-back like run_transition() above -
+# there is no content swap to hide here, just an overlay lifting off a board
+# that was already sitting there the whole time.
+#
+# `overlay` is whatever CanvasItem the caller wants faded (a dim + menu Control,
+# a dim + bubble panel, etc.) - this function owns only the fade, not what's
+# under it. The caller is expected to hide `overlay` and restore its alpha to
+# 1.0, and to actually unpause/unfreeze, only after this returns - "interactive
+# again at (or very near) the end of the wipe, not before."
+const RESUME_WIPE_SEC := 0.5
+
+func resume_wipe(overlay: CanvasItem) -> void:
+	var tween := create_tween()
+	tween.tween_property(overlay, "modulate:a", 0.0, RESUME_WIPE_SEC)
+	await tween.finished

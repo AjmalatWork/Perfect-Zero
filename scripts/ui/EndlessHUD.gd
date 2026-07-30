@@ -25,12 +25,18 @@ var _last_streak: int = 0
 var _meter_track: ColorRect
 var _meter_fill: ColorRect
 var _meter_target: float = 0.0
+var _bottom_row: Control
+
+# Authored (inset-free) position; _apply_safe_area() offsets from this.
+const BOTTOM_ROW_POS := Vector2(0, VIEWPORT_SIZE.y - 60)
 
 func _ready() -> void:
 	position = Vector2.ZERO
 	size = VIEWPORT_SIZE
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_build()
+	SafeArea.changed.connect(_apply_safe_area)
+	_apply_safe_area()
 
 	ScoreManager.tally_changed.connect(_on_tally_changed)
 	ScoreManager.campaign_total_changed.connect(_on_total_changed)
@@ -70,22 +76,31 @@ func _build() -> void:
 	_streak_popup.modulate.a = 0.0
 	add_child(_streak_popup)
 
-	# Fail crosses, bottom-center.
-	var bottom := Control.new()
-	bottom.position = Vector2(0, VIEWPORT_SIZE.y - 60)
-	bottom.size = Vector2(VIEWPORT_SIZE.x, 50)
-	bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(bottom)
+	# Fail crosses, bottom-center. Held as a field because this row sits only
+	# 60px off the bottom edge - exactly where Android's gesture navigation bar
+	# lands - so it gets lifted by the safe-area inset (see _apply_safe_area).
+	_bottom_row = Control.new()
+	_bottom_row.position = BOTTOM_ROW_POS
+	_bottom_row.size = Vector2(VIEWPORT_SIZE.x, 50)
+	_bottom_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_bottom_row)
 
 	var center := CenterContainer.new()
 	center.position = Vector2.ZERO
 	center.size = Vector2(VIEWPORT_SIZE.x, 50)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bottom.add_child(center)
+	_bottom_row.add_child(center)
 
 	_crosses_row = HBoxContainer.new()
 	_crosses_row.add_theme_constant_override("separation", 16)
 	center.add_child(_crosses_row)
+
+# Lifted clear of the gesture navigation bar. The top-of-screen readouts
+# (equation, total, meter) are horizontally centred and sit well inside the
+# vertical extents, so a side cutout can't reach them.
+func _apply_safe_area() -> void:
+	if _bottom_row != null:
+		_bottom_row.position = BOTTOM_ROW_POS - Vector2(0, SafeArea.bottom)
 
 func _on_tally_changed(tally: int, mult: float) -> void:
 	_equation.text = "%d   ×   %.1f" % [tally, mult]

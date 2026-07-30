@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+<!--handles - scaled ~1.1x from the original (about center), down from the
+    previous 1.25x pass which came out too large-->
+  <path d="M71,53 C27,53 27,124 73,119" fill="none" stroke="#ffd23f" stroke-width="15"
+        stroke-linecap="round"/>
+  <path d="M185,53 C229,53 229,124 183,119" fill="none" stroke="#ffd23f" stroke-width="15"
+        stroke-linecap="round"/>
+<!--cup + stem + base, one silhouette-->
+  <path d="M62,27 C51,86 64,124 108,143 L117,143 L117,181 L93,181 L93,207 L163,207 L163,181 L139,181 L139,143 L148,143 C192,124 205,86 194,27 Z"
+        fill="#ffd23f" fill-opacity="0.16"/>
+  <path d="M62,27 C51,86 64,124 108,143 L117,143 L117,181 L93,181 L93,207 L163,207 L163,181 L139,181 L139,143 L148,143 C192,124 205,86 194,27 Z"
+        fill="none" stroke="#ffd23f" stroke-width="13" stroke-linejoin="round"/>
+</svg>
