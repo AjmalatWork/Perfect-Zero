@@ -2,11 +2,15 @@ extends Control
 class_name HelpScreen
 
 const NEON := Color("22d3ff")
-const GOLD := Color("ffd23f")
-const GREEN := Color("39ff9e")
 const BACK_ACCENT := NEON  # same cyan as the title screen's ARCADE button
 const TEXT_FILL := Color("dfe3ee")
 const VIEWPORT_SIZE := Vector2(1600, 900)
+
+# TIMER TYPES / POWERUPS / SCORING all share this one size and colour (NEON) -
+# three section headings that used to be three different sizes (32/42/36) and
+# two different colours (GREEN/NEON/GOLD) with no meaning behind the
+# variation.
+const SECTION_HEADING_SIZE := 36
 
 const PAGE_COUNT := 3
 
@@ -44,11 +48,14 @@ func _build() -> void:
 
 	# Every page occupies the same reserved area (stacked, all but one hidden) so
 	# the layout doesn't jump when switching pages. Sized to the tallest page's
-	# actual content (page 1's 6-row type table) plus a little slack - NOT a
+	# actual content (page 1's 6-row type table) plus a little slack - a page's
+	# own children aren't clipped to this rect, so an under-sized reservation
+	# doesn't just get cropped, it visibly paints over the nav/back rows below
+	# it (exactly what the Decay row's longer description exposed here). Not a
 	# round number, so it doesn't overflow the 900px viewport once the
 	# heading/nav/back rows around it are accounted for.
 	var page_area := Control.new()
-	page_area.custom_minimum_size = Vector2(0, 560)
+	page_area.custom_minimum_size = Vector2(0, 620)
 	page_area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	outer.add_child(page_area)
 
@@ -90,7 +97,7 @@ func _build_page_1() -> Control:
 	title.configure("HOW TO PLAY", 42, TEXT_FILL, NEON)
 
 	col.add_child(_line("Click a timer the instant it hits 0.00.", 24, TEXT_FILL))
-	col.add_child(_heading("Timer types", 32, GREEN))
+	col.add_child(_heading("TIMER TYPES", SECTION_HEADING_SIZE, NEON))
 
 	var types_grid := GridContainer.new()
 	types_grid.columns = 2
@@ -111,8 +118,8 @@ func _build_page_2() -> Control:
 	col.add_theme_constant_override("separation", 18)
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 
-	col.add_child(_heading("POWERUPS", 42, NEON))
-	col.add_child(_line("Endless mode only. They start on cooldown and recharge as you play.",
+	col.add_child(_heading("POWERUPS", SECTION_HEADING_SIZE, NEON))
+	col.add_child(_line("Endless mode only. They recharge as you play.",
 		22, TEXT_FILL))
 
 	var grid := GridContainer.new()
@@ -142,8 +149,13 @@ func _add_powerup_row(grid: GridContainer, kind: int) -> void:
 	var name_cell := VBoxContainer.new()
 	name_cell.add_theme_constant_override("separation", 0)
 	name_cell.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	name_cell.add_child(_cell_label(
-		"%s  [%s]" % [PowerupSystem.name_of(kind), PowerupSystem.key_of(kind)], 24, accent))
+	# No keybind hint to append on mobile (PowerupSystem.key_hint() returns ""
+	# there, since there's no keyboard) - falls back to the bare name rather
+	# than leaving a dangling "Shield  ".
+	var hint := PowerupSystem.key_hint(kind)
+	var name_text := "%s  %s" % [PowerupSystem.name_of(kind), hint] if not hint.is_empty() \
+		else PowerupSystem.name_of(kind)
+	name_cell.add_child(_cell_label(name_text, 24, accent))
 	name_cell.add_child(_cell_label(Powerups.cooldown_text(kind), 18, Color(1, 1, 1, 0.5)))
 	grid.add_child(name_cell)
 
@@ -156,7 +168,7 @@ func _build_page_3() -> Control:
 	col.add_theme_constant_override("separation", 20)
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 
-	col.add_child(_heading("Scoring", 36, GOLD))
+	col.add_child(_heading("SCORING", SECTION_HEADING_SIZE, NEON))
 	col.add_child(_line(
 		"Points scale with how close to 0.00 you stop - closer scores more.",
 		22, TEXT_FILL))
@@ -249,12 +261,15 @@ func _cell_label(text: String, font_size: int, color: Color) -> Label:
 	return l
 
 # Wrapping cell: reserves width and wraps - only for the timer-type
-# descriptions, which are full sentences that genuinely need it.
+# descriptions, which are full sentences that genuinely need it. Widened from
+# 540 so the longest description (Decay's) wraps to 2 lines instead of 3 -
+# there's ample room either way (types_wrap centers within a 1440px-wide
+# margin, and the name column is nowhere near using the rest of it).
 func _wrap_cell_label(text: String, font_size: int, color: Color) -> Label:
 	var l := _cell_label(text, font_size, color)
 	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(540, 0)
+	l.custom_minimum_size = Vector2(600, 0)
 	return l
 
 func _button(text: String, accent: Color) -> Button:

@@ -109,7 +109,7 @@ func _show_popup(t: int, on_dismiss: Callable) -> void:
 	col.add_child(desc)
 
 	var got := Button.new()
-	got.text = "Got it"
+	got.text = "GOT IT"
 	got.custom_minimum_size = Vector2(180, 56)
 	got.add_theme_font_size_override("font_size", 26)
 	got.add_theme_color_override("font_color", Color.WHITE)

@@ -3,9 +3,16 @@ class_name ScoresScreen
 
 const NEON := Color("22d3ff")
 const GOLD := Color("ffd23f")
+const MUTED := Color("8b90a8")
 const BACK_ACCENT := NEON  # same cyan as the title screen's ARCADE button
 const TEXT_FILL := Color("dfe3ee")
 const VIEWPORT_SIZE := Vector2(1600, 900)
+
+# Matches _row()'s own total width (300 + 150 + 150 + 2x24 separation) so the
+# rule sits flush with the table it's ruling off, rather than an arbitrary
+# independent width.
+const DIVIDER_WIDTH := 648.0
+const DIVIDER_ALPHA := 0.4
 
 @export var campaign: Campaign
 
@@ -57,7 +64,12 @@ func _populate() -> void:
 	if campaign != null:
 		_col.add_child(_build_stage_list(campaign.stages))
 
-	_col.add_child(_spacer(12))
+	# Rules off the Campaign table from the Endless summary below it - two
+	# distinct sections that used to run together with nothing but a bare gap
+	# between them.
+	_col.add_child(_spacer(6))
+	_col.add_child(_make_divider())
+	_col.add_child(_spacer(10))
 
 	var en: int = SaveManager.load_high_score("highscore_endless_normal")
 	var eh: int = SaveManager.load_high_score("highscore_endless_hardcore")
@@ -100,6 +112,10 @@ func _build_stage_list(stages: Array) -> Control:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", STAGE_ROW_GAP)
 	col.add_child(_row("Stage", "Best", "Perfect", true))
+	# Rules off the header from the 12 data rows beneath it - previously
+	# nothing distinguished "Stage / Best / Perfect" from an ordinary row
+	# except its gold text colour.
+	col.add_child(_make_divider())
 	for i in range(stages.size()):
 		var stage: StageData = stages[i]
 		var best: int = SaveManager.load_high_score("highscore_stage_%d" % i)
@@ -138,6 +154,33 @@ func _heading(text: String, font_size: int, accent: Color) -> Label:
 	l.add_theme_constant_override("outline_size", 5)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	return l
+
+# A fading hairline (bright at centre, transparent at both ends) rather than
+# an edge-to-edge rule - same idiom StageResultScreen/EndlessEndScreen use, so
+# a "rule off this section" reads as one convention across the app.
+func _make_divider() -> TextureRect:
+	var grad := Gradient.new()
+	grad.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
+	grad.colors = PackedColorArray([
+		Color(1, 1, 1, 0.0),
+		Color(1, 1, 1, 1.0),
+		Color(1, 1, 1, 0.0),
+	])
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill_from = Vector2(0.0, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	tex.width = 256
+	tex.height = 1
+
+	var rect := TextureRect.new()
+	rect.texture = tex
+	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	rect.stretch_mode = TextureRect.STRETCH_SCALE
+	rect.custom_minimum_size = Vector2(DIVIDER_WIDTH, 2.0)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rect.modulate = Color(MUTED.r, MUTED.g, MUTED.b, DIVIDER_ALPHA)
+	return rect
 
 func _spacer(h: int) -> Control:
 	var c := Control.new()

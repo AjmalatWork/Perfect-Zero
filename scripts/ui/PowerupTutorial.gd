@@ -61,7 +61,7 @@ static func show_popup(host: Node, on_dismiss: Callable = Callable()) -> CanvasL
 
 	col.add_child(_label("POWERUPS", 34, NEON, HORIZONTAL_ALIGNMENT_CENTER))
 	var intro := _label(
-		"Endless gives you three. They start on cooldown, and recharge as you play.",
+		"Endless gives you three. They recharge as you play.",
 		21, TEXT_FILL, HORIZONTAL_ALIGNMENT_CENTER)
 	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	intro.custom_minimum_size = Vector2(660, 0)
@@ -102,8 +102,12 @@ static func _row(kind: int) -> Control:
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 10)
 	head.add_child(_label(PowerupSystem.name_of(kind), 24, accent, HORIZONTAL_ALIGNMENT_LEFT))
-	head.add_child(_label("[%s]" % PowerupSystem.key_of(kind), 18,
-		Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_LEFT))
+	# No keybind hint on mobile - there's no keyboard to bind, and the label is
+	# skipped outright rather than left empty so it doesn't reserve a hollow gap
+	# in the row.
+	var hint := PowerupSystem.key_hint(kind)
+	if not hint.is_empty():
+		head.add_child(_label(hint, 18, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_LEFT))
 	head.add_child(_label(Powerups.cooldown_text(kind), 18,
 		Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_LEFT))
 	text_col.add_child(head)

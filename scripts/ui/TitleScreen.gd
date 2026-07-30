@@ -159,7 +159,7 @@ func _build_quit_confirm() -> void:
 	center.add_child(col)
 
 	var heading := Label.new()
-	heading.text = "Quit Perfect Zero?"
+	heading.text = "Quit PERFECT ZERO?"
 	heading.add_theme_font_size_override("font_size", 40)
 	heading.add_theme_color_override("font_color", TEXT_FILL)
 	heading.add_theme_color_override("font_outline_color", RED)
@@ -248,7 +248,7 @@ func _build_version_label() -> void:
 	if version_text.is_empty():
 		version_text = str(ProjectSettings.get_setting("application/config/version", ""))
 	var label := Label.new()
-	label.text = "v%s" % version_text
+	label.text = "V%s" % version_text
 	label.add_theme_font_size_override("font_size", 16)
 	label.add_theme_color_override("font_color", Color(1, 1, 1, 0.3))
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -267,7 +267,7 @@ func _build_quit_link() -> void:
 	if OS.has_feature("mobile"):
 		return
 	var link := Button.new()
-	link.text = "Quit"
+	link.text = "QUIT"
 	link.flat = true
 	link.custom_minimum_size = Vector2(90, 36)
 	link.position = QUIT_LINK_POS

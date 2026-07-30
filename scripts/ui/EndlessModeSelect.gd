@@ -54,13 +54,13 @@ func _build() -> void:
 	col.add_child(title)
 	title.configure("ENDLESS", 72, TEXT_FILL, NEON)
 
-	col.add_child(_heading("Choose your mode", 26, TEXT_FILL, 0))
+	col.add_child(_heading("Choose your mode", 26, GOLD))
 
-	var normal := _button("NORMAL   -   3 lives", NEON)
+	var normal := _mode_button("NORMAL", "3 lives", NEON)
 	normal.pressed.connect(func(): _start(3))
 	col.add_child(_wrap(normal))
 
-	_hardcore_button = _button("HARDCORE   -   1 life", RED)
+	_hardcore_button = _mode_button("HARDCORE", "1 life", RED)
 	col.add_child(_wrap(_hardcore_button))
 
 	# Sized and colored to match every other screen's BACK button (200x64,
@@ -110,14 +110,25 @@ func _style_hardcore_lock() -> void:
 	if campaign_navigator != null and campaign_navigator.is_campaign_complete():
 		_hardcore_button.modulate = Color.WHITE
 		_style_button(_hardcore_button, RED)
+		_restyle_mode_labels(_hardcore_button, RED)
 		_hardcore_button.pressed.connect(_start_hardcore)
 	else:
 		_hardcore_button.modulate = Color(1, 1, 1, 0.45)
 		_style_button(_hardcore_button, LOCKED_ACCENT)
+		_restyle_mode_labels(_hardcore_button, LOCKED_ACCENT)
 		# Left enabled (not .disabled) so it can still receive the tap that
 		# shows the toast - a disabled Button eats input instead of firing
 		# `pressed`, same reasoning as the title screen's locked ENDLESS button.
 		_hardcore_button.pressed.connect(_on_locked_hardcore_tapped)
+
+# _style_button only recolors the Button itself, but a mode button's name/lives
+# text lives on two child Labels (see _mode_button) rather than the Button's
+# own .text, so the lock/unlock re-skin has to reach those separately or they'd
+# stay RED forever once locked.
+func _restyle_mode_labels(button: Button, accent: Color) -> void:
+	for child in button.get_children():
+		if child is Label:
+			child.add_theme_color_override("font_outline_color", accent)
 
 func _start_hardcore() -> void:
 	_start(1)
@@ -165,6 +176,48 @@ func _button(text: String, accent: Color) -> Button:
 	_style_button(button, accent)
 	PressFeedback.apply(button)
 	return button
+
+const MODE_BUTTON_SIZE := Vector2(420, 76)
+const MODE_LABEL_MARGIN := 28.0
+
+# Left-aligned mode name, right-aligned life count - a label/value pairing
+# rather than one centered "NORMAL   -   3 lives" string, so the two ends of
+# the button read as two distinct facts instead of one run-on line. The
+# button's own .text stays empty; these are child Labels laid out over it with
+# fixed pixel math, since MODE_BUTTON_SIZE is a constant rather than something
+# that reflows.
+func _mode_button(name_text: String, lives_text: String, accent: Color) -> Button:
+	var button := Button.new()
+	button.custom_minimum_size = MODE_BUTTON_SIZE
+	_style_button(button, accent)
+	PressFeedback.apply(button)
+
+	var half := MODE_BUTTON_SIZE.x * 0.5
+	var name_label := _mode_part_label(name_text, HORIZONTAL_ALIGNMENT_LEFT, accent)
+	name_label.position = Vector2(MODE_LABEL_MARGIN, 0)
+	name_label.size = Vector2(half - MODE_LABEL_MARGIN, MODE_BUTTON_SIZE.y)
+	button.add_child(name_label)
+
+	var lives_label := _mode_part_label(lives_text, HORIZONTAL_ALIGNMENT_RIGHT, accent)
+	lives_label.position = Vector2(half, 0)
+	lives_label.size = Vector2(half - MODE_LABEL_MARGIN, MODE_BUTTON_SIZE.y)
+	button.add_child(lives_label)
+
+	return button
+
+# mouse_filter IGNORE so these never intercept the click meant for the Button
+# underneath them - same reasoning as PauseMenu's pause-icon bars.
+func _mode_part_label(text: String, align: int, accent: Color) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.horizontal_alignment = align
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_font_size_override("font_size", 30)
+	l.add_theme_color_override("font_color", Color.WHITE)
+	l.add_theme_color_override("font_outline_color", accent)
+	l.add_theme_constant_override("outline_size", 4)
+	return l
 
 # Split out from _button() so the Hardcore lock can re-skin an already-built
 # button (accent swap between RED and LOCKED_ACCENT) without rebuilding it.

@@ -63,6 +63,20 @@ static func name_of(k: int) -> String:
 static func key_of(k: int) -> String:
 	return KEY_HINTS.get(k, "")
 
+# Bracketed keybind hint ("[A]"), or "" on Android/mobile builds where there's
+# no keyboard to bind - the buttons are still activated by tap there, so a
+# hint pointing at a key that doesn't exist would just be confusing. Returns
+# the empty string rather than "[]" so every caller can decide whether to omit
+# it entirely (skip a label, drop a separator) with one is_empty() check
+# instead of each reimplementing the mobile guard itself.
+static func key_hint(k: int) -> String:
+	if OS.has_feature("mobile"):
+		return ""
+	var key := key_of(k)
+	if key.is_empty():
+		return ""
+	return "[%s]" % key
+
 static func color_of(k: int) -> Color:
 	return COLORS.get(k, Color.WHITE)
 
@@ -351,12 +365,12 @@ func _fraction(left: float, total: float) -> float:
 func describe(kind: int) -> String:
 	match kind:
 		Kind.SHIELD:
-			return ("Turns your next fail into a safe miss, for %ds."
+			return ("Turns your next fail into a safe miss. Lasts %ds."
 				% int(shield_window_duration))
 		Kind.CLEAR_ALL:
-			return "Instantly clears every timer with a PERFECT."
+			return "Instantly clears every timer on screen with a PERFECT."
 		Kind.OVERCLOCK:
-			return ("Everything runs %s faster and scores %s, for %ds."
+			return ("Everything runs %s faster and every score is worth %s. Lasts %ds."
 				% [_mult_text(overclock_speed_multiplier),
 					_mult_text(overclock_score_multiplier),
 					int(overclock_duration)])

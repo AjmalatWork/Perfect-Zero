@@ -23,12 +23,12 @@ const COLORS := {
 }
 
 const DESCRIPTIONS := {
-	TimerData.TimerType.NORMAL: "A plain timer. Just stop it at 0.00.",
-	TimerData.TimerType.RED: "On stop, speeds up every other timer - and makes them score more.",
-	TimerData.TimerType.BLUE: "On stop, pauses every other timer for a second.",
-	TimerData.TimerType.GOLDEN: "A guaranteed PERFECT whenever you click it, worth double.",
-	TimerData.TimerType.BLACKOUT: "Its digits vanish near zero - time it by ear. Worth 2.5×.",
-	TimerData.TimerType.DECAY: "Counts up, not down. Stop it fast - its best grade drains away as it climbs.",
+	TimerData.TimerType.NORMAL: "Counts down to zero. Stop it as close to 0.00 as you can.",
+	TimerData.TimerType.RED: "Speeds up every other timer the moment you stop it. While they're sped up, they're worth more.",
+	TimerData.TimerType.BLUE: "Freezes every other timer for one second when you stop it.",
+	TimerData.TimerType.GOLDEN: "Always scores a PERFECT, no matter when you stop it. Worth double points.",
+	TimerData.TimerType.BLACKOUT: "The numbers disappear as it gets close to zero. You'll have to time it by ear.",
+	TimerData.TimerType.DECAY: "Counts up instead of down. The longer you wait, the worse your best possible score gets.",
 }
 
 # DECAY's border steps through these as its ceiling drops, so the tier is

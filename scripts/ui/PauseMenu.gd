@@ -9,7 +9,6 @@ const VIEWPORT_SIZE := Vector2(1600, 900)
 # Authored (inset-free) position; _apply_safe_area() offsets from this.
 const PAUSE_BUTTON_POS := Vector2(VIEWPORT_SIZE.x - 92, 28)
 const NEON := Color("22d3ff")
-const GOLD := Color("ffd23f")
 const RED := Color("ff2e5e")
 const GREY := Color("8b90a8")
 const TEXT_FILL := Color("dfe3ee")
@@ -130,6 +129,18 @@ func resume() -> void:
 	_resuming = true
 	for b in _menu_buttons:
 		b.disabled = true
+
+	# The icon fades back in across the same beat the menu fades out, rather
+	# than staying hidden for the entire wipe and popping in only once it's
+	# fully finished - that made the icon's return read as a stall on top of
+	# the wipe itself instead of part of the same motion. Safe to reveal this
+	# early: a stray click on it mid-wipe still hits pause()'s own `_paused`
+	# guard and silently no-ops until this function actually finishes below.
+	_pause_button.visible = _in_game()
+	_pause_button.modulate.a = 0.0
+	var icon_tween := create_tween()
+	icon_tween.tween_property(_pause_button, "modulate:a", 1.0, Juice.RESUME_WIPE_SEC)
+
 	await Juice.resume_wipe(_menu)
 	_menu.visible = false
 	_menu.modulate.a = 1.0
@@ -206,10 +217,15 @@ func _build() -> void:
 	_menu.visible = false
 	add_child(_menu)
 
+	# Raised from 0.82 - the live board behind this is bright, glowing timer
+	# digits, not a static backdrop, and at 0.82 they read clearly enough to
+	# compete with the tertiary row's own borderless buttons (see _button()'s
+	# TERTIARY case below, which also got a touch more backing for the same
+	# reason).
 	var dim := ColorRect.new()
 	dim.position = Vector2.ZERO
 	dim.size = VIEWPORT_SIZE
-	dim.color = Color(0.02, 0.02, 0.04, 0.82)
+	dim.color = Color(0.02, 0.02, 0.04, 0.93)
 	_menu.add_child(dim)
 
 	var center := CenterContainer.new()
@@ -217,16 +233,45 @@ func _build() -> void:
 	center.size = VIEWPORT_SIZE
 	_menu.add_child(center)
 
+	# Separation left at 0 - every gap in this column is an explicit _spacer()
+	# instead, so the actual pixel gap between two children is exactly the
+	# spacer's height rather than a container separation plus a spacer stacked
+	# on top of it. That's what makes the tier groupings below (small gap
+	# within a choice, bigger gap between tiers) land as the values actually
+	# written, not some compounded total.
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 20)
+	col.add_theme_constant_override("separation", 0)
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 	center.add_child(col)
 
 	col.add_child(_heading("PAUSED", 64, NEON))
-	col.add_child(_menu_button("RESUME", NEON, resume))
-	col.add_child(_menu_button("RESTART", GOLD, _on_restart))
-	col.add_child(_menu_button("OPTIONS", NEON, _open_options))
-	col.add_child(_menu_button("BACK TO TITLE", GREY, _on_title))
+	col.add_child(_spacer(28))
+
+	# Three tiers by how central each choice is to why this menu is open at
+	# all, not four equal buttons: RESUME is the entire reason to pause, so it
+	# gets the loudest treatment. RESTART is a real, deliberate choice but not
+	# the default path - same cyan family as RESUME (matching RETRY's colour
+	# everywhere else in the game, rather than gold, which now specifically
+	# means "the outcome" elsewhere and had no business describing a restart).
+	# OPTIONS and BACK TO TITLE don't touch the run at all - both are "go
+	# somewhere else" detours - so they're demoted into one small, quiet row.
+	col.add_child(_menu_button("RESUME", NEON, resume, Emphasis.PRIMARY, 32, Vector2(380, 84), true))
+	col.add_child(_spacer(36))
+	col.add_child(_menu_button("RESTART", NEON, _on_restart, Emphasis.SECONDARY, 28, Vector2(320, 68)))
+	col.add_child(_spacer(36))
+
+	var detour_row := HBoxContainer.new()
+	detour_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	detour_row.add_theme_constant_override("separation", 20)
+	var options_btn := _button("OPTIONS", NEON, Emphasis.TERTIARY, 22, Vector2(190, 54))
+	options_btn.pressed.connect(_open_options)
+	_menu_buttons.append(options_btn)
+	detour_row.add_child(options_btn)
+	var title_btn := _button("BACK TO TITLE", GREY, Emphasis.TERTIARY, 22, Vector2(190, 54))
+	title_btn.pressed.connect(_on_title)
+	_menu_buttons.append(title_btn)
+	detour_row.add_child(title_btn)
+	col.add_child(detour_row)
 
 	# Options overlay (reuses OptionsPanel; closes back to the pause menu).
 	_options = preload("res://scenes/OptionsPanel.tscn").instantiate()
@@ -251,9 +296,9 @@ func _build_pause_icon(button: Button) -> void:
 		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		button.add_child(bar)
 
-func _menu_button(text: String, accent: Color, handler: Callable) -> Control:
-	var b := _button(text, accent)
-	b.custom_minimum_size = Vector2(340, 68)
+func _menu_button(text: String, accent: Color, handler: Callable, emphasis: int = Emphasis.PRIMARY,
+		font_size: int = 28, min_size: Vector2 = Vector2(340, 68), glow: bool = false) -> Control:
+	var b := _button(text, accent, emphasis, font_size, min_size, glow)
 	b.pressed.connect(handler)
 	_menu_buttons.append(b)
 	var w := CenterContainer.new()
@@ -270,24 +315,84 @@ func _heading(text: String, font_size: int, accent: Color) -> Label:
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	return l
 
-func _button(text: String, accent: Color) -> Button:
+func _spacer(h: float) -> Control:
+	var c := Control.new()
+	c.custom_minimum_size = Vector2(0, h)
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return c
+
+# Rank within the menu, expressed as weight rather than hue - the same
+# language StageResultScreen's own Emphasis enum uses. PRIMARY is a solid lit
+# panel, SECONDARY the same accent with the fill and glow taken away, TERTIARY
+# is bare text that only becomes a button under the cursor. All three keep the
+# accent, so RESUME/RESTART still read as one cyan family despite the weight
+# difference.
+enum Emphasis { PRIMARY, SECONDARY, TERTIARY }
+
+# `glow` is separate from `emphasis` rather than implied by PRIMARY, since
+# _button() also builds the corner pause icon (called with every other
+# argument left at its default) - that one predates this tier system and was
+# never meant to pick up RESUME's new shadow along with it.
+func _button(text: String, accent: Color, emphasis: int = Emphasis.PRIMARY,
+		font_size: int = 28, min_size: Vector2 = Vector2(340, 68), glow: bool = false) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.add_theme_font_size_override("font_size", 28)
-	button.add_theme_color_override("font_color", Color.WHITE)
-	button.add_theme_color_override("font_outline_color", accent)
-	button.add_theme_constant_override("outline_size", 4)
-	button.add_theme_stylebox_override("normal", _box(accent, 0.85))
-	button.add_theme_stylebox_override("hover", _box(accent, 0.7))
-	button.add_theme_stylebox_override("pressed", _box(accent, 0.6))
+	button.custom_minimum_size = min_size
 	PressFeedback.apply(button)
+
+	match emphasis:
+		Emphasis.SECONDARY:
+			button.add_theme_font_size_override("font_size", font_size)
+			button.add_theme_color_override("font_color", accent.lerp(TEXT_FILL, 0.5))
+			button.add_theme_constant_override("outline_size", 0)
+			button.add_theme_stylebox_override("normal", _box(accent, 0.93, 0.0, 2, 0.55))
+			button.add_theme_stylebox_override("hover", _box(accent, 0.82, 0.3, 2, 0.9))
+			button.add_theme_stylebox_override("pressed", _box(accent, 0.72, 0.25, 2, 0.9))
+		Emphasis.TERTIARY:
+			button.add_theme_font_size_override("font_size", font_size)
+			button.add_theme_color_override("font_color", accent)
+			button.add_theme_color_override("font_hover_color", TEXT_FILL)
+			button.add_theme_color_override("font_pressed_color", TEXT_FILL)
+			button.add_theme_constant_override("outline_size", 0)
+			# darken just under 1.0 (not 1.0) - still no border and still reads
+			# as bare text rather than a boxed button, but gives OPTIONS/BACK TO
+			# TITLE a faint near-black plate of their own to sit on. At fully
+			# transparent (1.0) these two had nothing behind them but the dim
+			# overlay, and the bright board underneath was winning that fight.
+			button.add_theme_stylebox_override("normal", _box(accent, 0.95, 0.0, 0))
+			button.add_theme_stylebox_override("hover", _box(accent, 0.85, 0.0, 0))
+			button.add_theme_stylebox_override("pressed", _box(accent, 0.78, 0.0, 0))
+		_:
+			button.add_theme_font_size_override("font_size", font_size)
+			button.add_theme_color_override("font_color", Color.WHITE)
+			button.add_theme_color_override("font_outline_color", accent)
+			button.add_theme_constant_override("outline_size", 4)
+			# Glow only when asked for (RESUME) - the same idiom the title
+			# screen's own primary buttons use, to make it the loudest thing on
+			# screen. The plain corner pause icon stays exactly as it looked
+			# before this tier system existed.
+			var shadow: float = 0.35 if glow else 0.0
+			var shadow_hover: float = 0.5 if glow else 0.0
+			var shadow_pressed: float = 0.4 if glow else 0.0
+			button.add_theme_stylebox_override("normal", _box(accent, 0.85, shadow, 3, 1.0, 8))
+			button.add_theme_stylebox_override("hover", _box(accent, 0.7, shadow_hover, 3, 1.0, 12))
+			button.add_theme_stylebox_override("pressed", _box(accent, 0.6, shadow_pressed, 3, 1.0, 6))
+
 	return button
 
-func _box(accent: Color, darken: float) -> StyleBoxFlat:
+# `darken` of 1.0 plus a 0-alpha border is what makes a flat, invisible box for
+# the tertiary state - content margins still apply, so the label keeps the
+# same padding as a real button and the row doesn't shift on hover.
+func _box(accent: Color, darken: float, shadow_alpha: float = 0.0, border_width: int = 3,
+		border_alpha: float = 1.0, shadow_size: int = 0) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = accent.darkened(darken)
+	sb.bg_color = Color(accent.darkened(darken), 0.0 if darken >= 1.0 else 1.0)
 	sb.set_corner_radius_all(12)
-	sb.set_border_width_all(3)
-	sb.border_color = accent
+	sb.set_border_width_all(border_width)
+	sb.border_color = Color(accent.r, accent.g, accent.b, 0.0 if border_width == 0 else border_alpha)
 	sb.set_content_margin_all(10)
+	if shadow_alpha > 0.0:
+		sb.shadow_color = Color(accent.r, accent.g, accent.b, shadow_alpha)
+		sb.shadow_size = shadow_size
+		sb.shadow_offset = Vector2.ZERO
 	return sb

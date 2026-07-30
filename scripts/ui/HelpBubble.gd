@@ -244,8 +244,12 @@ func _build() -> void:
 	_heading_label = _heading(PAGE_TITLES[0], 30, NEON)
 	col.add_child(_heading_label)
 
+	# Reserved height, not clipped - a page's actual content painting past this
+	# rect would overlap the nav/close row below it rather than just being
+	# cropped, so this has to fit the tallest page's real content (same issue
+	# HelpScreen's own page area has, see its comment).
 	var page_area := Control.new()
-	page_area.custom_minimum_size = Vector2(0, 380)
+	page_area.custom_minimum_size = Vector2(0, 430)
 	col.add_child(page_area)
 
 	var types_page := _build_types_page()
@@ -307,8 +311,11 @@ func _add_powerup_row(grid: GridContainer, kind: int) -> void:
 	var accent: Color = PowerupSystem.color_of(kind)
 	var name_cell := VBoxContainer.new()
 	name_cell.add_theme_constant_override("separation", 0)
-	name_cell.add_child(_cell_label(
-		"%s  [%s]" % [PowerupSystem.name_of(kind), PowerupSystem.key_of(kind)], 21, accent))
+	# No keybind hint on mobile - see HelpScreen's identical guard.
+	var hint := PowerupSystem.key_hint(kind)
+	var name_text := "%s  %s" % [PowerupSystem.name_of(kind), hint] if not hint.is_empty() \
+		else PowerupSystem.name_of(kind)
+	name_cell.add_child(_cell_label(name_text, 21, accent))
 	name_cell.add_child(_cell_label(Powerups.cooldown_text(kind), 16, Color(1, 1, 1, 0.5)))
 	grid.add_child(name_cell)
 	grid.add_child(_wrap_cell_label(Powerups.describe(kind)))
@@ -324,7 +331,11 @@ func _cell_label(text: String, font_size: int, color: Color) -> Label:
 func _wrap_cell_label(text: String) -> Label:
 	var l := _cell_label(text, 19, TEXT_FILL)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(420, 0)
+	# Widened from 420 for the same reason as HelpScreen's own wrap cell:
+	# Decay's longer description was wrapping to 3 lines and outgrowing the
+	# reserved page height. There's room - col is 680 wide and the name column
+	# next to this is nowhere near using the rest of it.
+	l.custom_minimum_size = Vector2(460, 0)
 	return l
 
 func _heading(text: String, font_size: int, accent: Color) -> Label:

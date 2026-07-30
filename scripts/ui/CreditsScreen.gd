@@ -1,18 +1,72 @@
 extends Control
 class_name CreditsScreen
 
+# One flowing composition, three zones, two dividers holding it together -
+# not two competing columns. A prior pass tried a two-column split (the human
+# credit vs. the technical attribution) and it read as two mismatched
+# columns fighting for equal billing with a dead gap between them: a
+# thank-you and a Pixabay attribution aren't naturally equal partners, and
+# forcing them to be produced exactly that imbalance. Real credits pages have
+# one emotional focal point (who made this) and a quiet footer of small
+# print below it - that's the actual fix, not more column-tuning.
+
 const NEON := Color("22d3ff")
 const GOLD := Color("ffd23f")
+const MUTED := Color("8b90a8")
 const BACK_ACCENT := NEON  # same cyan as the title screen's ARCADE button
 const TEXT_FILL := Color("dfe3ee")
 const VIEWPORT_SIZE := Vector2(1600, 900)
 
-# Placeholder wording throughout, per the brief - final copy to be supplied by
-# the designer. Left as clearly-labelled placeholders rather than guessed-at
-# final text, so nothing here is mistaken for the real credited wording.
-const DEV_LINE := "Made by [Your Name] - design, code, procedural art, synthesized audio"
-const THANKS_LINE := "Thanks to everyone who played and rated the jam build!"
-const LINKS_LINE := "itch.io: [link]   -   Play Store: [link]   -   [email / socials]"
+# Every gap on this screen is a multiple of one unit rather than an
+# independently-picked value, so the rhythm actually repeats instead of each
+# gap being tuned in isolation. `col` itself carries NO separation of its
+# own - every gap below is an explicit spacer sized to one of these
+# multiples. Combining a container separation with explicit spacers between
+# the same children double-counts every gap (separation + spacer +
+# separation), which is exactly what pushed this screen's total height past
+# 900px and off the bottom of the canvas the first time - same bug this
+# project already found and fixed once on the Endless End screen.
+const UNIT := 6.0
+
+const FS_NAME := 44       # the one hero credit - the biggest text after the title
+const FS_LEAD := 20       # short lead-in phrases
+const FS_BODY := 21       # the thank-you message
+const FS_ITEM := 20       # the "named thing"/accented highlight in a colophon group
+                          # (song title's kicker, "Godot Engine", "GMTK Game Jam 2026") -
+                          # MUSIC's kicker uses this same size now rather than its own
+                          # smaller one, so all three colophon highlights match.
+const FS_DETAIL := 17     # the smaller supporting line under a highlight
+
+const DIVIDER_WIDTH := 900.0
+const DIVIDER_ALPHA := 0.4
+const COLOPHON_GAP := 110.0
+
+const DEV_LEAD := "Designed & Developed by"
+const DEV_NAME := "MAKSTER"
+
+# One merged thank-you/origin statement rather than two separate blocks - the
+# jam origin is part of the same acknowledgment ("who played and rated
+# this"), not a second, unrelated fact bolted on after it. GMTK_LINE keeps its
+# own line so it can carry the same accent every other "named thing" on this
+# screen gets.
+const THANKS_LINES := ["Thanks to everyone", "who played and rated in the"]
+const GMTK_LINE := "GMTK Game Jam 2026"
+const THEME_LINE := "Theme: Countdown"
+
+const MUSIC_KICKER := "MUSIC"
+# Quoted and given the same plain treatment as "by arpmedia"/"via Pixabay"
+# now, rather than being the group's own accented headline - MUSIC itself is
+# the highlighted part of this group, so the title underneath it doesn't need
+# to also compete for attention.
+const MUSIC_LINES := ["\"Synthwave Retro 80s\"", "by arpmedia", "via Pixabay"]
+const ENGINE_LINES := ["Made with", "Godot Engine"]
+
+const FEEDBACK_LEAD := "We'd love your feedback"
+const FEEDBACK_BUTTON := "EMAIL US"
+
+# Pre-fills a subject/body so feedback arrives as an actual sentence rather
+# than a blank compose window.
+const FEEDBACK_MAILTO := "mailto:mail2makster@gmail.com?subject=Feedback%20for%20Perfect%20Zero&body=Hi%2C%0A%0AI%20wanted%20to%20share%20some%20feedback%20about%20Perfect%20Zero.%0A%0A"
 
 func _ready() -> void:
 	_build()
@@ -35,80 +89,178 @@ func _build() -> void:
 	add_child(center)
 
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 22)
+	col.add_theme_constant_override("separation", 0)
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
-	col.custom_minimum_size = Vector2(900, 0)
 	center.add_child(col)
 
 	var title := WaveHeading.new()
 	col.add_child(title)
 	title.configure("CREDITS", 56, TEXT_FILL, NEON)
+	col.add_child(_spacer(UNIT * 4.0))
 
-	col.add_child(_line(DEV_LINE, 24, TEXT_FILL))
-	col.add_child(_line(THANKS_LINE, 20, Color(1, 1, 1, 0.75)))
+	# --- Zone 1: the hero credit ------------------------------------------
+	col.add_child(_stack_line(DEV_LEAD, FS_LEAD, MUTED))
+	col.add_child(_spacer(UNIT * 1.0))
+	col.add_child(_stack_line(DEV_NAME, FS_NAME, TEXT_FILL, GOLD, 5))
+	col.add_child(_spacer(UNIT * 4.0))
+	col.add_child(_make_heart())
+	col.add_child(_spacer(UNIT * 2.0))
+	col.add_child(_stack_line(THANKS_LINES[0], FS_BODY, TEXT_FILL))
+	col.add_child(_spacer(UNIT * 1.0))
+	col.add_child(_stack_line(THANKS_LINES[1], FS_BODY, TEXT_FILL))
+	col.add_child(_spacer(UNIT * 1.0))
+	# NEON, not gold - gold stays reserved for "MAKSTER" alone, even here
+	# right next to it, so there's still exactly one hero credit on the page.
+	col.add_child(_stack_line(GMTK_LINE, FS_ITEM, TEXT_FILL, NEON, 3))
+	col.add_child(_spacer(UNIT * 0.5))
+	col.add_child(_stack_line(THEME_LINE, FS_DETAIL, MUTED))
 
-	col.add_child(_spacer(10))
-	col.add_child(_heading("MUSIC", 24, GOLD))
-	col.add_child(_line("\"Synthwave Retro 80s\" by arpmedia - via Pixabay", 20, TEXT_FILL))
+	col.add_child(_spacer(UNIT * 4.0))
+	col.add_child(_make_divider())
+	col.add_child(_spacer(UNIT * 4.0))
 
-	col.add_child(_spacer(10))
-	col.add_child(_heading("ENGINE", 24, GOLD))
-	col.add_child(_line("Made with Godot Engine %s" % Engine.get_version_info().string, 20, TEXT_FILL))
+	# --- Zone 2: the colophon - two quiet peers side by side (Origin moved up
+	# into Zone 1, see above) -------------------------------------------------
+	var colophon := HBoxContainer.new()
+	colophon.add_theme_constant_override("separation", int(COLOPHON_GAP))
+	colophon.alignment = BoxContainer.ALIGNMENT_CENTER
+	colophon.add_child(_colophon_group("", MUSIC_LINES, false, MUSIC_KICKER))
+	# "Godot Engine" now gets the same accent treatment as GMTK Game Jam 2026 -
+	# "Made with" is the plain lead-in, matching the plain-then-accent pattern
+	# already used for "Originally created for" / "GMTK Game Jam 2026".
+	colophon.add_child(_colophon_group(ENGINE_LINES[1], [ENGINE_LINES[0]], true))
+	col.add_child(colophon)
 
-	col.add_child(_spacer(10))
-	col.add_child(_line("Originally created for GMTK Game Jam 2026 - theme: Countdown", 20,
-		Color(1, 1, 1, 0.75)))
+	col.add_child(_spacer(UNIT * 4.0))
+	col.add_child(_make_divider())
+	col.add_child(_spacer(UNIT * 4.0))
 
-	col.add_child(_spacer(16))
-	col.add_child(_line(LINKS_LINE, 19, Color(1, 1, 1, 0.6)))
+	# --- Zone 3: feedback + back --------------------------------------------
+	col.add_child(_stack_line(FEEDBACK_LEAD, FS_LEAD, MUTED))
+	col.add_child(_spacer(UNIT * 2.0))
+	var feedback_button := _button(FEEDBACK_BUTTON, NEON)
+	feedback_button.pressed.connect(func(): OS.shell_open(FEEDBACK_MAILTO))
+	col.add_child(_wrap(feedback_button))
 
-	col.add_child(_spacer(10))
+	col.add_child(_spacer(UNIT * 2.0))
 	var back := _button("BACK", BACK_ACCENT)
 	back.pressed.connect(_on_back)
-	var back_wrap := CenterContainer.new()
-	back_wrap.add_child(back)
-	col.add_child(back_wrap)
+	col.add_child(_wrap(back))
 
-# Android's system back (bridged to ui_cancel by MainScreenRouter) and desktop
-# Escape both land on the same handler the on-screen BACK button uses. Guarded
-# on the current state because hidden screens stay in the tree and would
-# otherwise all answer the same press - see LevelSelect for the full note.
-func _unhandled_input(event: InputEvent) -> void:
-	if GameManager.current_state != GameManager.GameState.CREDITS:
-		return
-	if event.is_action_pressed("ui_cancel"):
-		_on_back()
-		get_viewport().set_input_as_handled()
+# One colophon entry: an (optional) kicker - the ONE highlighted element in a
+# group, used only where the content alone wouldn't say what it is ("MUSIC"
+# above a song title, which doesn't announce itself the way "Made with Godot
+# Engine" does) - plus an (optional) accented "named thing", plus plain
+# supporting lines. A group gets a kicker OR a named-thing accent, never
+# both: the kicker already is the group's one highlighted element, so its
+# content stays uniformly plain underneath it (this is why Music's own title
+# is quoted plain text now, not a second competing accent). `lead_with_plain_
+# first` puts the named line second rather than first, for a group whose own
+# name needs an introducing phrase before it. Cyan is used for every accent
+# here, never gold - gold is reserved entirely for "MAKSTER", so there's one
+# hero credit on the whole page, not several fighting for the same weight.
+func _colophon_group(named_line: String, plain_lines: Array, lead_with_plain_first: bool = false,
+		kicker: String = "") -> Control:
+	var group := VBoxContainer.new()
+	group.add_theme_constant_override("separation", int(UNIT * 0.5))
+	group.alignment = BoxContainer.ALIGNMENT_CENTER
 
-func _on_back() -> void:
-	GameManager.set_state(GameManager.GameState.MENU)
+	if not kicker.is_empty():
+		group.add_child(_stack_line(kicker, FS_ITEM, TEXT_FILL, NEON, 3))
+		group.add_child(_spacer(UNIT * 0.5))
+
+	var named: Label = _stack_line(named_line, FS_ITEM, TEXT_FILL, NEON, 3) if not named_line.is_empty() else null
+
+	if lead_with_plain_first and plain_lines.size() > 0:
+		group.add_child(_stack_line(plain_lines[0], FS_DETAIL, MUTED))
+		if named != null:
+			group.add_child(named)
+		for i in range(1, plain_lines.size()):
+			group.add_child(_stack_line(plain_lines[i], FS_DETAIL, MUTED))
+	else:
+		if named != null:
+			group.add_child(named)
+		for line in plain_lines:
+			group.add_child(_stack_line(line, FS_DETAIL, MUTED))
+
+	return group
+
+# Hand-authored SVG (icons/credits_heart.svg) rather than a Unicode "❤"
+# glyph - the project already learned this lesson once with the pause icon
+# (some export targets, notably Web, don't reliably render every Unicode
+# glyph the editor preview shows) - and rather than a procedurally-drawn
+# shape, matching the same house style every other icon in icons/ uses:
+# translucent accent fill + bold accent stroke, no glow filter (thorvg blurs
+# the whole composited shape rather than giving a soft halo behind a crisp
+# one).
+func _make_heart() -> Control:
+	var heart := TextureRect.new()
+	heart.texture = load("res://icons/credits_heart.svg")
+	heart.custom_minimum_size = Vector2(40, 38)
+	heart.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	heart.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	heart.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return _wrap(heart)
+
+# --- Structure ----------------------------------------------------------
+
+# Same fading hairline every overhauled screen uses (Stage Result/Endless
+# End/Scores) - the thread that ties this page's three zones into one flow
+# instead of three disconnected blocks.
+func _make_divider() -> TextureRect:
+	var grad := Gradient.new()
+	grad.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
+	grad.colors = PackedColorArray([
+		Color(1, 1, 1, 0.0),
+		Color(1, 1, 1, 1.0),
+		Color(1, 1, 1, 0.0),
+	])
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill_from = Vector2(0.0, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	tex.width = 256
+	tex.height = 1
+
+	var rect := TextureRect.new()
+	rect.texture = tex
+	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	rect.stretch_mode = TextureRect.STRETCH_SCALE
+	rect.custom_minimum_size = Vector2(DIVIDER_WIDTH, 2.0)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rect.modulate = Color(MUTED.r, MUTED.g, MUTED.b, DIVIDER_ALPHA)
+	return rect
+
+func _wrap(c: Control) -> Control:
+	var w := CenterContainer.new()
+	w.add_child(c)
+	return w
 
 func _spacer(h: float) -> Control:
 	var c := Control.new()
 	c.custom_minimum_size = Vector2(0, h)
 	return c
 
-func _heading(text: String, font_size: int, accent: Color) -> Label:
-	var l := _line(text, font_size, TEXT_FILL)
-	l.add_theme_color_override("font_outline_color", accent)
-	l.add_theme_constant_override("outline_size", 4)
-	return l
-
-func _line(text: String, font_size: int, color: Color) -> Label:
+# `outline_size` 0 (the default) skips the outline entirely, for the plain
+# muted/detail lines that don't need one - only the hero name and the two
+# colophon "named things" get an accent outline.
+func _stack_line(text: String, font_size: int, color: Color, outline: Color = Color.TRANSPARENT,
+		outline_size: int = 0) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_size_override("font_size", font_size)
 	l.add_theme_color_override("font_color", color)
+	if outline_size > 0:
+		l.add_theme_color_override("font_outline_color", outline)
+		l.add_theme_constant_override("outline_size", outline_size)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(880, 0)
 	return l
 
 func _button(text: String, accent: Color) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(200, 64)
-	button.add_theme_font_size_override("font_size", 28)
+	button.custom_minimum_size = Vector2(220, 64)
+	button.add_theme_font_size_override("font_size", 26)
 	button.add_theme_color_override("font_color", Color.WHITE)
 	button.add_theme_color_override("font_outline_color", accent)
 	button.add_theme_constant_override("outline_size", 4)
@@ -126,3 +278,17 @@ func _box(accent: Color, darken: float) -> StyleBoxFlat:
 	sb.border_color = accent
 	sb.set_content_margin_all(10)
 	return sb
+
+# Android's system back (bridged to ui_cancel by MainScreenRouter) and desktop
+# Escape both land on the same handler the on-screen BACK button uses. Guarded
+# on the current state because hidden screens stay in the tree and would
+# otherwise all answer the same press - see LevelSelect for the full note.
+func _unhandled_input(event: InputEvent) -> void:
+	if GameManager.current_state != GameManager.GameState.CREDITS:
+		return
+	if event.is_action_pressed("ui_cancel"):
+		_on_back()
+		get_viewport().set_input_as_handled()
+
+func _on_back() -> void:
+	GameManager.set_state(GameManager.GameState.MENU)

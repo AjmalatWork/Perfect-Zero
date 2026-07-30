@@ -129,11 +129,15 @@ class PowerupButton extends Control:
 		_name_label.size = Vector2(size.x, 20)
 		add_child(_name_label)
 
-		var key_label := _make_label(14, Color(1, 1, 1, 0.5))
-		key_label.text = "[%s]" % PowerupSystem.key_of(kind)
-		key_label.position = Vector2(0, 2)
-		key_label.size = Vector2(size.x, 18)
-		add_child(key_label)
+		# Omitted entirely on mobile - PowerupSystem.key_hint() returns "" there,
+		# and an empty label would still reserve a visibly blank line above the icon.
+		var hint := PowerupSystem.key_hint(kind)
+		if not hint.is_empty():
+			var key_label := _make_label(14, Color(1, 1, 1, 0.5))
+			key_label.text = hint
+			key_label.position = Vector2(0, 2)
+			key_label.size = Vector2(size.x, 18)
+			add_child(key_label)
 
 		# Sits over the icon during a cooldown, blank otherwise.
 		_cd_label = _make_label(34, Color.BLACK)

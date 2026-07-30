@@ -93,6 +93,10 @@ const RUN_OVER_LEAD := 0.55
 # each `is_new_best_*` says whether this run is what set them.
 var final_score: int = 0
 var best_score: int = 0
+# The mark this run was actually chasing, kept separately from `best_score`
+# (which is overwritten to `final_score` on a record) so the end screen can
+# report what was beaten instead of repeating the number it just showed.
+var previous_best_score: int = 0
 var is_new_best: bool = false
 var run_time: float = 0.0
 var best_time: float = 0.0
@@ -565,6 +569,7 @@ func _end_run() -> void:
 
 	var score_key := "highscore_endless_%s" % suffix
 	var prev_best_score: int = SaveManager.load_high_score(score_key)
+	previous_best_score = prev_best_score
 	best_score = prev_best_score
 	is_new_best = final_score > best_score
 	if is_new_best:

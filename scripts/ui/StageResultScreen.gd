@@ -42,10 +42,14 @@ const ANTICIPATION_FADE_IN := 0.35
 # shape), so this deliberately borrows the *other* established idiom instead:
 # plain outlined text, the same language the grade signs and streak popups
 # already use for "celebratory, not interactive".
-const BADGE_SIZE := Vector2(230, 48)
-const BADGE_GLOW_SIZE := Vector2(300, 140)
-const BADGE_GAP := 20.0           # clearance from the score column's right edge
-const BADGE_Y_LIFT := 34.0        # raises it off _final_label's centreline, away from the button row below
+#
+# It sits in its own reserved lane directly above the score, and its halo blooms
+# from the score's centre rather than from the badge - a record belongs to a
+# number, so the two have to read as one object rather than as a label parked
+# somewhere near one.
+const BADGE_SIZE := Vector2(300, 44)
+const BADGE_GLOW_SIZE := Vector2(520, 300)
+const BADGE_LANE_HEIGHT := 44.0   # reserved up front so a record can't reflow the column
 
 # Countup escalation. 0.16 puts a stage at full intensity after ~6 PERFECTs,
 # which is most of the way through a typical stage's stop count - so the ceiling
@@ -74,11 +78,46 @@ const BREATH_IN := 0.1
 const BREATH_HOLD := 0.3
 const BREATH_OUT := 0.3
 
+# --- Palette --------------------------------------------------------------
+# One colour, one job. The screen settles into five roles and nothing borrows
+# another's:
+#   CLEAR/FAIL - did you pass. Headline only.
+#   GOLD       - the outcome. The final score, and the record it may have set.
+#   NEON       - interactive. Buttons, matching the cyan every other screen
+#                already uses for "you can press this".
+#   MUTED      - supporting. The arithmetic, the record line, the way out.
+#   TEXT_FILL  - the fill under all of it.
+# The tally line sits in MUTED rather than NEON specifically so gold arrives
+# unshared at the finale and so no static text wears the button colour.
 const CLEAR_COLOR := Color("39ff9e")   # green headline on clear
 const FAIL_COLOR := Color("ff2e5e")    # red headline on fail
 const NEON := Color("22d3ff")
 const GOLD := Color("ffd23f")
-const HEAT := Color("ff5a1e")
+const MUTED := Color("8b90a8")
+const HEAT := Color("ff5a1e")          # flames and heat flashes, never text
+
+# --- Type scale -----------------------------------------------------------
+# Steps far enough apart that rank is readable at a glance. The hero is a clean
+# 2x the tally, which is what keeps the countup from competing with the number
+# it resolves into.
+const FS_HERO := 92        # final score
+const FS_HEADLINE := 60    # STAGE CLEAR! / FAILED
+const FS_SIGN := 44        # transient grade signs, own lane
+const FS_TALLY := 46       # "tally x mult"
+const FS_STREAK := 40      # transient streak popup
+const FS_BADGE := 28
+const FS_BUTTON := 28
+const FS_SUPPORT := 24     # record line, tertiary button
+const FS_COMPLETE := 32    # campaign-complete message
+
+# --- Zone rules -----------------------------------------------------------
+# The column runs headline / score / actions. Without a separator those read as
+# one undifferentiated stack, so each boundary gets a hairline that fades out at
+# both ends rather than a hard edge-to-edge rule.
+const DIVIDER_WIDTH := 620.0
+const DIVIDER_THICKNESS := 2.0
+const DIVIDER_ALPHA := 0.5
+const DIVIDER_TINT_TIME := 0.6
 
 const COMPLETE_TEXT := "PERFECT ZERO, ACHIEVED.\nReady to see how long you can last? Try Endless Mode."
 
@@ -97,8 +136,10 @@ var _score_digits: DigitCounter
 var _times_label: Label
 var _mult_label: Label
 var _final_label: Label          # the product, revealed in the finale
-var _attempt_label: Label
-var _best_label: Label
+var _badge_lane: Control         # reserved space above the score for the NEW BEST badge
+var _record_label: Label         # the one supporting line - see _show_summary
+var _divider_top: TextureRect
+var _divider_bottom: TextureRect
 var _button_row: HBoxContainer
 var _title_row: HBoxContainer
 var _streak_label: Label
@@ -163,6 +204,13 @@ func _run_reveal(cleared: bool) -> void:
 		# FAIL scores 0 - no tally to animate, just the FAILED summary + RETRY.
 		_score_line.visible = false
 		_final_label.visible = false
+		# Both reserved lanes exist to hold reveal content - grade signs and the
+		# record badge - and a fail runs no reveal, so neither can ever be filled
+		# on this path. Left visible they are ~130px of guaranteed-empty column in
+		# the middle of an already-sparse screen, with the dividers ruling off
+		# almost nothing. Hiding drops them out of the layout entirely.
+		_sign_anchor.visible = false
+		_badge_lane.visible = false
 		_show_fail_summary()
 		_revealing = false
 		return
@@ -439,6 +487,11 @@ func _animate_finale(final_mult: float, stage_score: int, tier: int) -> void:
 	_final_label.modulate.a = 1.0
 	_erupt(1.0, _final_label, tier)
 	_wash_screen(tier)
+	# The wash, the flames and the outro all announce the tier and then take it
+	# away with them. The dividers keep it: they are structure, so tinting them
+	# leaves a tier read on the settled screen without adding a fourth colour to
+	# the text or competing with gold for the score.
+	_tint_dividers(TIER_COLORS[tier], DIVIDER_TINT_TIME)
 
 	# The one moment in a stage explicitly allowed to be the biggest beat on
 	# screen - Campaign defers all its scoring, so this is the entire payoff.
@@ -459,9 +512,11 @@ func _finish_clear(stage_score: int) -> void:
 	var best_key: String = "highscore_stage_%d" % index
 	var best: int = SaveManager.load_high_score(best_key)
 	# Captured before `best` is overwritten below: the flourish has to know
-	# whether THIS attempt set the record, not merely what the record now is.
-	# No schema change is involved - the stored value is a plain score and this
-	# is the same comparison the screen already made to decide whether to write.
+	# whether THIS attempt set the record, not merely what the record now is, and
+	# the summary line reports the mark that was beaten. No schema change is
+	# involved - the stored value is a plain score and this is the same comparison
+	# the screen already made to decide whether to write.
+	var previous_best: int = best
 	var is_new_best: bool = stage_score > best
 	if is_new_best:
 		best = stage_score
@@ -472,7 +527,7 @@ func _finish_clear(stage_score: int) -> void:
 	# that beats your previous best updates the total too; a worse retry leaves it.
 	ScoreManager.set_score(stage_controller.stage_start_score + best, 1.0)
 
-	_show_summary(stage_score, best)
+	_show_summary(best, previous_best, is_new_best)
 	_build_buttons(true)
 	_start_final_idle()
 
@@ -505,6 +560,10 @@ func _play_new_best_flourish() -> void:
 	if _badge == null:
 		return
 	_position_badge()
+	# The record belongs to the number, so the number itself takes the change and
+	# keeps it for as long as the result is on screen. The badge announces it;
+	# this is the mark it leaves.
+	_final_label.add_theme_color_override("font_outline_color", GOLD.lightened(0.3))
 	for node in [_badge, _badge_glow]:
 		node.visible = true
 		node.modulate.a = 0.0
@@ -515,11 +574,11 @@ func _play_new_best_flourish() -> void:
 	var tween := create_tween()
 	tween.set_parallel(true)
 	tween.tween_property(_badge, "modulate:a", 1.0, 0.16)
-	# The glow settles quieter than the text so it reads as a halo behind the
-	# words rather than a second flourish competing with them. Kept well under
-	# 1.0 since this is now a genuine bright-centre bloom rather than the
-	# mis-oriented vignette from before - full strength would wash the text out.
-	tween.tween_property(_badge_glow, "modulate:a", 0.35, 0.25)
+	# The glow settles well under full strength: it sits behind the 92px score,
+	# which is the brightest thing on the screen, and a stronger bloom flattens
+	# the digits instead of lifting them - confirmed visually at 0.3, which
+	# visibly softened the hero number's edges next to a non-record clear.
+	tween.tween_property(_badge_glow, "modulate:a", 0.2, 0.25)
 	tween.tween_property(_badge, "scale", Vector2.ONE, 0.34) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	# Settles level from a slight tilt - a ribbon being pinned on, rather than a
@@ -580,7 +639,7 @@ func _play_unlock_banner(text: String) -> void:
 	col.add_child(label)
 
 	var nice := Button.new()
-	nice.text = "NICE!"
+	nice.text = "OKAY!"
 	nice.custom_minimum_size = Vector2(200, 64)
 	nice.add_theme_font_size_override("font_size", 28)
 	nice.add_theme_color_override("font_color", Color.WHITE)
@@ -598,20 +657,21 @@ func _play_unlock_banner(text: String) -> void:
 	AudioManager.play_unlock()
 	Juice.punch(1.6)
 
-# Parked just outside the centred column's right edge, level with the top of
-# the score rather than its centre - lifted clear of both the number itself and
-# (more importantly) the button row two rows further down, which is what was
-# reading as "too close to NEXT STAGE". The column's children stretch to its
-# full width, so the label's own right edge is the column edge rather than the
-# edge of the digits - what keeps this clear of the number no matter how many
-# digits the score has. Clamped so a wide column can never push it off screen.
+# Centred in its reserved lane, which sits immediately above the score - a
+# kicker on the number rather than a label floating beside it. The lane and the
+# score are both full-width children of the same centred column, so sharing the
+# lane's centre line puts the badge dead over the digits no matter how many
+# there are.
+#
+# The halo is centred on the score, not on the badge, so one bloom covers both
+# and reads as a single lit object.
 func _position_badge() -> void:
-	var local: Vector2 = _final_label.global_position - global_position
-	var x: float = minf(local.x + _final_label.size.x + BADGE_GAP,
-		VIEWPORT_SIZE.x - BADGE_SIZE.x - BADGE_GAP)
-	var y: float = local.y - BADGE_Y_LIFT
-	_badge.position = Vector2(x, y)
-	_badge_glow.position = _badge.position + BADGE_SIZE * 0.5 - BADGE_GLOW_SIZE * 0.5
+	var lane: Vector2 = _badge_lane.global_position - global_position
+	_badge.position = Vector2(lane.x + _badge_lane.size.x * 0.5 - BADGE_SIZE.x * 0.5, lane.y)
+
+	var score: Vector2 = _final_label.global_position - global_position
+	var score_center := score + _final_label.size * 0.5
+	_badge_glow.position = score_center - BADGE_GLOW_SIZE * 0.5
 
 # Keeps the screen from going completely static while the player reads the
 # result. Applied to the final score rather than to a grade sign: the per-stop
@@ -640,16 +700,30 @@ func _stop_final_idle() -> void:
 
 func _show_fail_summary() -> void:
 	var best: int = SaveManager.load_high_score("highscore_stage_%d" % campaign_navigator.current_index)
-	_show_summary(0, best)
+	# A failed attempt scored 0 and there is no hero number to sit under, so the
+	# only line worth printing is the mark still standing.
+	_show_summary(best, best, false)
 	_build_buttons(false)
 
-func _show_summary(earned: int, best: int) -> void:
-	_attempt_label.text = "This attempt:  %d" % earned
-	_best_label.text = "Best for this stage:  %d" % best
+# One supporting line, not two. The hero number directly above already IS this
+# attempt's score, so a "This attempt" line only restates it, and on a record a
+# "Best" line restates the same figure a third time. What is actually new
+# depends on the outcome: after a record, the mark that was beaten; otherwise,
+# the mark still to beat. A first-ever clear has neither, and gets nothing - the
+# badge is already saying the only thing there is to say.
+func _show_summary(best: int, previous_best: int, is_new_best: bool) -> void:
+	var text := ""
+	if is_new_best:
+		if previous_best > 0:
+			text = "PREVIOUS BEST   %d" % previous_best
+	elif best > 0:
+		text = "BEST   %d" % best
+
+	_record_label.text = text
+	if text.is_empty():
+		return
 	var fade := create_tween()
-	fade.set_parallel(true)
-	fade.tween_property(_attempt_label, "modulate:a", 1.0, 0.25)
-	fade.tween_property(_best_label, "modulate:a", 1.0, 0.25)
+	fade.tween_property(_record_label, "modulate:a", 1.0, 0.25)
 
 # --- Display helpers ------------------------------------------------------
 
@@ -658,10 +732,12 @@ func _reset_display(cleared: bool) -> void:
 		child.queue_free()
 	for child in _title_row.get_children():
 		child.queue_free()
-	# modulate.a (not `visible`) so labels keep their layout space from the start
-	# - otherwise the centered column grows as they appear and visibly shifts.
-	_attempt_label.modulate.a = 0.0
-	_best_label.modulate.a = 0.0
+	# modulate.a (not `visible`) so the line keeps its layout space from the start
+	# - otherwise the centered column grows as it appears and visibly shifts.
+	_record_label.modulate.a = 0.0
+	# `visible` is the campaign-complete screen's doing, so it has to be undone
+	# here for a retry that lands back on a normal result.
+	_record_label.visible = true
 
 	# Cleared unconditionally: the FAIL path skips _hold_breath entirely, and a
 	# reveal interrupted mid-breath would otherwise leave the screen dimmed.
@@ -690,13 +766,29 @@ func _reset_display(cleared: bool) -> void:
 	# second one on top of the first.
 	_stop_final_idle()
 
+	# A FAIL hides these; cleared unconditionally so a retry after a fail (or vice
+	# versa) doesn't inherit the previous attempt's collapsed layout.
+	_sign_anchor.visible = true
+	_badge_lane.visible = true
+
 	_score_line.visible = true
 	_score_line.modulate.a = 1.0
 	_final_label.visible = true
 	_final_label.modulate.a = 0.0
+	# The record flourish brightens this and leaves it bright, which is the point
+	# - so the next attempt has to put it back.
+	_final_label.add_theme_color_override("font_outline_color", GOLD)
 	_set_final_display(0.0)
 
-	_headline.add_theme_font_size_override("font_size", 64)  # reset (completion shrinks it)
+	# Back to plain structure. The tier tint is earned per reveal in the finale,
+	# and the completion screen hides these outright, so both have to be undone
+	# before an attempt that may earn neither.
+	_tint_dividers(MUTED, 0.0)
+	for divider in [_divider_top, _divider_bottom]:
+		if divider != null:
+			divider.visible = true
+
+	_headline.add_theme_font_size_override("font_size", FS_HEADLINE)  # reset (completion shrinks it)
 
 	if cleared:
 		_headline.text = "STAGE CLEAR!"
@@ -716,9 +808,11 @@ func _set_final_display(value: float) -> void:
 
 func _set_mult_display(mult: float) -> void:
 	_mult_label.text = "%.1f" % mult
-	# Glow warms from cyan toward gold as the multiplier climbs (uncapped).
+	# Glow warms out of the muted line toward gold as the multiplier climbs
+	# (uncapped). Ending on gold is the point: the multiplier heating up is the
+	# screen previewing the colour the outcome is about to arrive in.
 	var t: float = clampf((mult - 1.0) / 5.0, 0.0, 1.0)
-	_mult_label.add_theme_color_override("font_outline_color", NEON.lerp(GOLD, t))
+	_mult_label.add_theme_color_override("font_outline_color", MUTED.lerp(GOLD, t))
 
 func _sign_center() -> Vector2:
 	return _sign_anchor.global_position - global_position + _sign_anchor.size * 0.5
@@ -727,7 +821,7 @@ func _spawn_sign(grade: String, at: Vector2) -> void:
 	# Floating grade sign that pops with oomph, centered on `at` (its own lane).
 	var sign_label := Label.new()
 	sign_label.text = grade
-	sign_label.add_theme_font_size_override("font_size", 44)
+	sign_label.add_theme_font_size_override("font_size", FS_SIGN)
 	sign_label.add_theme_color_override("font_color", ScoreManager.grade_color(grade))
 	sign_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
 	sign_label.add_theme_constant_override("outline_size", 8)
@@ -882,13 +976,20 @@ func _tier_flame_gradient(tier: int) -> Gradient:
 
 # --- Buttons --------------------------------------------------------------
 
+# Three weights of the same idea rather than three colours. NEXT STAGE is the
+# forward path and carries the row; RETRY is the same cyan a step quieter, so
+# the pair reads as one family with an obvious default instead of two equal
+# choices arguing in gold and blue; BACK TO TITLE drops out of the family
+# entirely into muted flat text, since leaving is the one thing nobody needs
+# help finding.
 func _build_buttons(cleared: bool) -> void:
 	if cleared:
-		_add_button(_button_row, "RETRY", GOLD, _on_retry)
+		_add_button(_button_row, "RETRY", NEON, _on_retry, Emphasis.SECONDARY)
 		_add_button(_button_row, "NEXT STAGE", NEON, _on_next)
 	else:
+		# Nothing to be secondary to on a fail - RETRY is the whole row.
 		_add_button(_button_row, "RETRY", NEON, _on_retry)
-	_add_button(_title_row, "BACK TO TITLE", Color("8b90a8"), _on_title)
+	_add_button(_title_row, "BACK TO TITLE", MUTED, _on_title, Emphasis.TERTIARY)
 
 # Android's system back (bridged to ui_cancel by MainScreenRouter) and desktop
 # Escape both land on _on_title(), the same handler the on-screen BACK TO TITLE
@@ -968,8 +1069,12 @@ func _show_campaign_complete() -> void:
 	_stop_final_idle()
 	_score_line.visible = false
 	_final_label.visible = false
-	_attempt_label.visible = false
-	_best_label.visible = false
+	_record_label.visible = false
+	# The dividers bracket the score zone, so with the score gone they would be
+	# ruling off nothing.
+	for divider in [_divider_top, _divider_bottom]:
+		if divider != null:
+			divider.visible = false
 	# The flourish is positioned off _final_label and can still be mid-animation
 	# (or simply sitting there) from the stage clear that triggered this screen -
 	# without this it floats on screen, pinned to a label that just disappeared
@@ -980,10 +1085,12 @@ func _show_campaign_complete() -> void:
 		_badge_glow.visible = false
 
 	_headline.text = COMPLETE_TEXT
-	_headline.add_theme_font_size_override("font_size", 32)  # long text: smaller so it fits
+	_headline.add_theme_font_size_override("font_size", FS_COMPLETE)  # long text: smaller so it fits
 	_headline.add_theme_color_override("font_color", GOLD)
 	_headline.add_theme_color_override("font_outline_color", GOLD.darkened(0.4))
 
+	# Full emphasis here rather than the tertiary treatment it gets on a normal
+	# result: there is nothing else to press and nowhere else to go.
 	_add_button(_title_row, "BACK TO TITLE", GOLD, _on_finish)
 
 	# Fires once ever, the moment the full campaign is completed - layered onto
@@ -1037,7 +1144,7 @@ func _build_ui() -> void:
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 	center.add_child(col)
 
-	_headline = _make_label(64, HEAT)
+	_headline = _make_label(FS_HEADLINE, HEAT)
 	_headline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(_headline)
 
@@ -1048,32 +1155,50 @@ func _build_ui() -> void:
 	_sign_anchor.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.add_child(_sign_anchor)
 
-	# "tally x mult" - score and multiplier on one line, same size.
+	# Opens the score zone.
+	_divider_top = _make_divider()
+	col.add_child(_divider_top)
+
+	# "tally x mult" - score and multiplier on one line, same size. Muted rather
+	# than cyan: this is the working, and it has to stay clearly subordinate to
+	# the number it resolves into.
 	_score_line = HBoxContainer.new()
 	_score_line.alignment = BoxContainer.ALIGNMENT_CENTER
 	_score_line.add_theme_constant_override("separation", 16)
 	col.add_child(_score_line)
 
 	_score_digits = DigitCounter.new()
-	_score_digits.configure(54, TEXT_FILL, NEON)
+	_score_digits.configure(FS_TALLY, TEXT_FILL, MUTED)
 	_score_line.add_child(_score_digits)
-	_times_label = _make_label(54, Color(0.7, 0.72, 0.82))
+	_times_label = _make_label(FS_TALLY, MUTED)
 	_times_label.text = "×"
 	_score_line.add_child(_times_label)
-	_mult_label = _make_label(54, NEON)
+	_mult_label = _make_label(FS_TALLY, MUTED)
 	_score_line.add_child(_mult_label)
 
-	_final_label = _make_label(84, GOLD)
+	_badge_lane = Control.new()
+	_badge_lane.custom_minimum_size = Vector2(0, BADGE_LANE_HEIGHT)
+	_badge_lane.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(_badge_lane)
+
+	_final_label = _make_label(FS_HERO, GOLD, 6)
 	_final_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(_final_label)
 
-	_attempt_label = _make_label(28, Color(0, 0, 0, 0.55))  # subtle dark edge, not a white halo
-	_attempt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	col.add_child(_attempt_label)
+	# Supporting text takes the muted fill directly, with a dark edge only for
+	# legibility over the backdrop - the same idiom the grade signs use.
+	_record_label = _make_label(FS_SUPPORT, Color(0, 0, 0, 0.6), 3)
+	_record_label.add_theme_color_override("font_color", MUTED)
+	_record_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# Height pinned so the column's vertical layout is fixed from construction:
+	# this line can legitimately end up empty, and _position_badge reads the
+	# score's position on the frame the record lands.
+	_record_label.custom_minimum_size = Vector2(0, 34)
+	col.add_child(_record_label)
 
-	_best_label = _make_label(28, GOLD.darkened(0.35))
-	_best_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	col.add_child(_best_label)
+	# Closes the score zone and opens the actions.
+	_divider_bottom = _make_divider()
+	col.add_child(_divider_bottom)
 
 	_button_row = HBoxContainer.new()
 	_button_row.add_theme_constant_override("separation", 24)
@@ -1107,7 +1232,7 @@ func _build_ui() -> void:
 
 	# Plain outlined text - the same idiom the grade signs and streak popups use,
 	# which already reads throughout this game as "celebratory, not clickable".
-	_badge = _make_label(30, GOLD.darkened(0.2))
+	_badge = _make_label(FS_BADGE, GOLD.darkened(0.2))
 	_badge.text = "NEW BEST!"
 	_badge.size = BADGE_SIZE
 	_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1118,7 +1243,7 @@ func _build_ui() -> void:
 	add_child(_badge)
 
 	# Free-floating streak popup near the top (not in the centered column).
-	_streak_label = _make_label(40, GOLD)
+	_streak_label = _make_label(FS_STREAK, GOLD)
 	_streak_label.text = ""
 	_streak_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_streak_label.position = Vector2(0, 70)
@@ -1203,6 +1328,14 @@ class DigitCounter extends HBoxContainer:
 				_cooldowns[i] = POP_COOLDOWN
 		_shown = text
 
+	# Re-tints every digit already on screen, for a record that lands after the
+	# countup has finished - configure() alone only affects labels created after
+	# the call, and by the time a record is confirmed every digit already exists.
+	func set_outline(color: Color) -> void:
+		_outline = color
+		for label in _labels:
+			label.add_theme_color_override("font_outline_color", color)
+
 	# Every digit at once, for a per-stop gain where the whole number deserves
 	# emphasis - expressed in the same digit-level language as the countup rather
 	# than as a competing whole-label pop.
@@ -1239,6 +1372,49 @@ class DigitCounter extends HBoxContainer:
 			var l := _labels[i]
 			l.pivot_offset = l.size * 0.5
 			l.scale = Vector2.ONE * (1.0 + POP_SCALE * _pops[i])
+
+# A hairline that fades to nothing at both ends rather than a hard rule. An
+# edge-to-edge line would draw a box around the score and read as a table; this
+# reads as a change of subject. Built white and coloured via modulate, so the
+# same texture serves both the resting muted state and the finale's tier tint.
+func _make_divider() -> TextureRect:
+	var grad := Gradient.new()
+	grad.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
+	grad.colors = PackedColorArray([
+		Color(1, 1, 1, 0.0),
+		Color(1, 1, 1, 1.0),
+		Color(1, 1, 1, 0.0),
+	])
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill_from = Vector2(0.0, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	tex.width = 256
+	tex.height = 1
+
+	var rect := TextureRect.new()
+	rect.texture = tex
+	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	rect.stretch_mode = TextureRect.STRETCH_SCALE
+	# Also sets the centred column's minimum width, which is what keeps the rules
+	# wider than the text they bracket instead of hugging it.
+	rect.custom_minimum_size = Vector2(DIVIDER_WIDTH, DIVIDER_THICKNESS)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rect.modulate = Color(MUTED.r, MUTED.g, MUTED.b, DIVIDER_ALPHA)
+	return rect
+
+# `duration` of 0 assigns outright - a reveal reset has to be instant, since a
+# tween there would be visibly undoing the previous attempt's tier.
+func _tint_dividers(color: Color, duration: float) -> void:
+	var target := Color(color.r, color.g, color.b, DIVIDER_ALPHA)
+	for divider in [_divider_top, _divider_bottom]:
+		if divider == null:
+			continue
+		if duration <= 0.0:
+			divider.modulate = target
+			continue
+		var tween := create_tween()
+		tween.tween_property(divider, "modulate", target, duration)
 
 func _make_label(font_size: int, outline_color: Color, outline_size: int = 4) -> Label:
 	var label := Label.new()
@@ -1361,27 +1537,60 @@ func _build_sign_ring() -> void:
 	_sign_ring.z_index = 21
 	add_child(_sign_ring)
 
-func _add_button(container: HBoxContainer, text: String, accent: Color, handler: Callable) -> void:
+# Rank within a row, expressed as weight rather than hue. PRIMARY is a lit
+# panel, SECONDARY the same accent with the fill and glow taken away, TERTIARY
+# is bare text that only becomes a button under the cursor. All three keep the
+# accent, so a row still reads as one set of related choices.
+enum Emphasis { PRIMARY, SECONDARY, TERTIARY }
+
+func _add_button(container: HBoxContainer, text: String, accent: Color, handler: Callable,
+		emphasis: int = Emphasis.PRIMARY) -> void:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(240, 84)
-	button.add_theme_font_size_override("font_size", 30)
-	button.add_theme_color_override("font_color", Color.WHITE)
-	button.add_theme_color_override("font_outline_color", accent)
-	button.add_theme_constant_override("outline_size", 5)
-	button.add_theme_stylebox_override("normal", _make_box(accent, 0.85, 0.35, 8))
-	button.add_theme_stylebox_override("hover", _make_box(accent, 0.7, 0.5, 12))
-	button.add_theme_stylebox_override("pressed", _make_box(accent, 0.6, 0.4, 6))
 	button.pressed.connect(handler)
 	PressFeedback.apply(button)
+
+	match emphasis:
+		Emphasis.SECONDARY:
+			button.custom_minimum_size = Vector2(240, 84)
+			button.add_theme_font_size_override("font_size", FS_BUTTON)
+			button.add_theme_color_override("font_color", accent.lerp(TEXT_FILL, 0.5))
+			button.add_theme_constant_override("outline_size", 0)
+			button.add_theme_stylebox_override("normal", _make_box(accent, 0.93, 0.0, 0, 2, 0.55))
+			button.add_theme_stylebox_override("hover", _make_box(accent, 0.82, 0.3, 8, 2, 0.9))
+			button.add_theme_stylebox_override("pressed", _make_box(accent, 0.72, 0.25, 4, 2, 0.9))
+		Emphasis.TERTIARY:
+			button.custom_minimum_size = Vector2(200, 54)
+			button.add_theme_font_size_override("font_size", FS_SUPPORT)
+			button.add_theme_color_override("font_color", accent)
+			button.add_theme_color_override("font_hover_color", TEXT_FILL)
+			button.add_theme_color_override("font_pressed_color", TEXT_FILL)
+			button.add_theme_constant_override("outline_size", 0)
+			button.add_theme_stylebox_override("normal", _make_box(accent, 1.0, 0.0, 0, 0, 0.0))
+			button.add_theme_stylebox_override("hover", _make_box(accent, 0.88, 0.0, 0, 0, 0.0))
+			button.add_theme_stylebox_override("pressed", _make_box(accent, 0.8, 0.0, 0, 0, 0.0))
+		_:
+			button.custom_minimum_size = Vector2(240, 84)
+			button.add_theme_font_size_override("font_size", FS_BUTTON)
+			button.add_theme_color_override("font_color", Color.WHITE)
+			button.add_theme_color_override("font_outline_color", accent)
+			button.add_theme_constant_override("outline_size", 5)
+			button.add_theme_stylebox_override("normal", _make_box(accent, 0.85, 0.35, 8))
+			button.add_theme_stylebox_override("hover", _make_box(accent, 0.7, 0.5, 12))
+			button.add_theme_stylebox_override("pressed", _make_box(accent, 0.6, 0.4, 6))
+
 	container.add_child(button)
 
-func _make_box(accent: Color, darken: float, shadow_alpha: float, shadow_size: int) -> StyleBoxFlat:
+# `darken` of 1.0 plus a 0-alpha border is what makes a flat, invisible box for
+# the tertiary state - the content margins still apply, so the label keeps the
+# same padding as a real button and the row doesn't shift on hover.
+func _make_box(accent: Color, darken: float, shadow_alpha: float, shadow_size: int,
+		border_width: int = 3, border_alpha: float = 1.0) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = accent.darkened(darken)
+	sb.bg_color = Color(accent.darkened(darken), 0.0 if darken >= 1.0 else 1.0)
 	sb.set_corner_radius_all(12)
-	sb.set_border_width_all(3)
-	sb.border_color = accent
+	sb.set_border_width_all(border_width)
+	sb.border_color = Color(accent.r, accent.g, accent.b, border_alpha)
 	sb.set_content_margin_all(12)
 	sb.shadow_color = Color(accent.r, accent.g, accent.b, shadow_alpha)
 	sb.shadow_size = shadow_size
