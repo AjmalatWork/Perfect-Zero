@@ -7,14 +7,16 @@ class_name MainScreenRouter
 const USE_FADES := true
 const FADE_TIME := 0.14
 
-# Every screen in the game (all of Main's children) is built with absolute
-# pixel positions against this fixed canvas - none of them use anchors, so
-# nothing here reflows to fill extra space. project.godot's stretch/aspect is
-# "expand", which grows the *available* canvas on whichever axis the real
-# viewport is wider/taller than this, but a top-left-anchored 1600x900 block of
-# content doesn't move to compensate - on a wider device that reads as
-# everything pinned to the left edge with a dead zone on the right.
-const VIEWPORT_SIZE := Vector2(1600, 900)
+# Every screen in the game (all of Main's children) is built with absolute pixel
+# positions against the reference canvas - none of them use anchors, so nothing
+# reflows to fill extra space. project.godot's stretch/aspect is "expand", which
+# grows the *available* canvas on whichever axis the real viewport is
+# wider/taller than the reference, but a top-left-anchored block of content
+# doesn't move to compensate - on a wider device that reads as everything pinned
+# to the left edge with a dead zone on the right.
+#
+# The reference itself is Layout.canvas_size, which transposes between landscape
+# and portrait, so this offset is what keeps the content block centred in either.
 
 @export var title_screen: CanvasItem
 @export var level_select: CanvasItem
@@ -30,15 +32,35 @@ const VIEWPORT_SIZE := Vector2(1600, 900)
 
 var _shown: Dictionary = {}   # node -> logical visibility
 var _fades: Dictionary = {}   # node -> active fade Tween
+var _background: ColorRect    # fills the pillarbox bands so they read as part of the game, not a hard cut
 
 func _ready() -> void:
+	_build_background()
 	# Register before the first state change so Juice has a shake/punch target.
 	Juice.register_stage(self)
 	get_tree().root.size_changed.connect(_recenter)
+	# An orientation flip changes the reference canvas before the OS rotation
+	# lands, so the offset has to be recomputed on both signals rather than
+	# waiting for the resize alone.
+	Layout.changed.connect(_recenter)
 	_recenter()
 	GameManager.state_changed.connect(_on_state_changed)
 	# Launch to the title screen.
 	GameManager.set_state(GameManager.GameState.MENU)
+
+# A base-level fallback behind every screen: on a device whose aspect ratio
+# doesn't match the fixed canvas, this is what used to show as the engine's
+# raw default_clear_color in the letterbox bands, with a visible seam against
+# whatever a given screen paints inside the canvas. Matches that same clear
+# colour exactly (rather than introducing a new tone) so it's a pure gap-fill,
+# not a new visual decision - individual screens with their own dim/backdrop
+# already extend to override this via ScreenLayout.cover() where they exist.
+func _build_background() -> void:
+	_background = ColorRect.new()
+	_background.color = Color(0.043137, 0.043137, 0.070588)
+	_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_background)
+	move_child(_background, 0)
 
 # --- Pillarboxing: centering the fixed 1600x900 canvas -----------------------
 #
@@ -56,10 +78,13 @@ func _ready() -> void:
 # from here would just be overwritten on the very next frame.
 func _recenter() -> void:
 	var visible_size := get_viewport().get_visible_rect().size
-	var offset := (visible_size - VIEWPORT_SIZE) * 0.5
+	var offset := (visible_size - Layout.canvas_size) * 0.5
 	offset.x = maxf(offset.x, 0.0)
 	offset.y = maxf(offset.y, 0.0)
 	Juice.recenter(offset)
+	if _background != null:
+		_background.position = -offset
+		_background.size = visible_size
 
 # --- Android system back ---------------------------------------------------
 #

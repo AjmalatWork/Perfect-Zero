@@ -21,7 +21,7 @@ class_name EndlessRunner
 @export var value_high_floor: float = 7.0          # floored range by value_ramp_time
 @export var value_low_floor: float = 4.0
 @export var value_ramp_time: float = 90.0
-@export var cell_size: float = 160.0
+@export var cell_size: float = 160.0               # landscape; see _cell_size()
 @export var min_zero_gap: float = 1.0              # keep spawned timers' zero-moments >= this far apart
 
 # Per-type concurrent caps. -1 = uncapped. "Golden" is the bonus/guaranteed-PERFECT type.
@@ -43,6 +43,19 @@ class_name EndlessRunner
 @export var low_life_threshold: int = 1
 
 const VALUE_PICK_ATTEMPTS := 20  # random resamples tried to satisfy min_zero_gap before settling
+
+# --- Board metrics per orientation -----------------------------------------
+# Portrait trades the wide side margins it doesn't have for bigger cells: the
+# grid goes from 32% of a 1600-wide canvas to 71% of a 900-wide one, which buys
+# a 160 -> 200 cell (64dp -> 80dp) without crowding anything.
+const PORTRAIT_CELL_SIZE := 200.0
+const LANDSCAPE_GRID_SEPARATION := 14
+const PORTRAIT_GRID_SEPARATION := 20
+
+# The zone the grid is centred inside. Landscape centres it in the whole canvas;
+# portrait pulls it off dead-centre to leave the lower third for the powerup row
+# (see PowerupBar), keeping both inside one-handed thumb reach.
+const PORTRAIT_GRID_ZONE := Rect2(0.0, 380.0, 900.0, 720.0)
 
 const BLACKOUT_VALUE_MIN := 7.0  # Blackout's own fixed start_time range -
 const BLACKOUT_VALUE_MAX := 8.0  # constant regardless of elapsed_time
@@ -109,9 +122,20 @@ var is_new_best_streak: bool = false
 # how big the summary reveal allows itself to be - see EndlessEndScreen.
 var run_quality: float = 0.0
 
+func _ready() -> void:
+	Layout.changed.connect(_apply_board_metrics)
+	_apply_board_metrics()
+
 func start_run(lives: int) -> void:
+	# A restart from the pause menu goes ENDLESS_PLAYING -> ENDLESS_PLAYING (the
+	# same state throughout - pausing never touches GameManager.current_state),
+	# so Juice's own "leaving play" cleanup never fires for it. Explicit here so
+	# a run restarted while Shield/Overclock was active doesn't hand that
+	# overlay's live animation to the fresh run.
+	Juice.reset_run_effects()
 	max_lives = lives
 	_build_grid()
+	_apply_board_metrics()
 	_clear_cells()
 
 	ScoreManager.reset_run()
@@ -195,7 +219,7 @@ func _spawn_timer(cell: int, type: int, start_value: float) -> void:
 		td.decay_miss_duration = decay_miss_duration
 
 	var slot: TimerSlot = timer_slot_scene.instantiate()
-	slot.custom_minimum_size = Vector2(cell_size, cell_size)
+	slot.custom_minimum_size = Vector2(_cell_size(), _cell_size())
 	_cells[cell].add_child(slot)
 	slot.set_anchors_preset(Control.PRESET_FULL_RECT)
 	slot.setup(td)
@@ -233,7 +257,7 @@ func _maybe_show_first_seen_callout(slot: TimerSlot, type: int) -> void:
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.z_index = 20
-	label.size = Vector2(cell_size + 60.0, 30)
+	label.size = Vector2(_cell_size() + 60.0, 30)
 	label.position = Vector2(-30.0, -34.0)
 	label.modulate.a = 0.0
 	slot.add_child(label)
@@ -380,6 +404,9 @@ func _count_active_type(type: int) -> int:
 
 # --- Grid bookkeeping -----------------------------------------------------
 
+func _cell_size() -> float:
+	return PORTRAIT_CELL_SIZE if Layout.is_portrait() else cell_size
+
 func _build_grid() -> void:
 	if not _cells.is_empty():
 		return  # cells are persistent - build once
@@ -387,10 +414,39 @@ func _build_grid() -> void:
 	for i in range(GRID_CELLS):
 		grid_slots[i] = null
 		var cell := Control.new()
-		cell.custom_minimum_size = Vector2(cell_size, cell_size)
 		cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		grid_container.add_child(cell)
 		_cells.append(cell)
+
+# Cell sizing, grid spacing and the zone the grid centres in, all re-applied on
+# an orientation flip. Split out from _build_grid because the cells themselves
+# are persistent (built once, reused across runs) - only their metrics change.
+#
+# The zone is the GridContainer's parent CenterContainer (Main.tscn's
+# EndlessGame/EndlessGrid): resizing that is what moves the grid off dead-centre
+# in portrait, without any of the slots needing to know where they sit.
+func _apply_board_metrics() -> void:
+	var cs := _cell_size()
+	for cell in _cells:
+		cell.custom_minimum_size = Vector2(cs, cs)
+	for slot in grid_slots:
+		if slot != null and is_instance_valid(slot):
+			slot.custom_minimum_size = Vector2(cs, cs)
+
+	if grid_container is GridContainer:
+		var sep: int = PORTRAIT_GRID_SEPARATION if Layout.is_portrait() \
+			else LANDSCAPE_GRID_SEPARATION
+		grid_container.add_theme_constant_override("h_separation", sep)
+		grid_container.add_theme_constant_override("v_separation", sep)
+
+	var zone := grid_container.get_parent() as Control
+	if zone != null:
+		if Layout.is_portrait():
+			zone.position = PORTRAIT_GRID_ZONE.position
+			zone.size = PORTRAIT_GRID_ZONE.size
+		else:
+			zone.position = Vector2.ZERO
+			zone.size = Layout.LANDSCAPE_SIZE
 
 func _clear_cells() -> void:
 	for i in range(GRID_CELLS):
@@ -579,32 +635,51 @@ func _end_run() -> void:
 	# Streak and survival time are stored per mode alongside the score record.
 	# Time is kept as whole milliseconds so it can ride SaveManager's int-typed,
 	# type-guarded high-score path rather than the untyped generic store.
+	# Score can legitimately stay at 0 on a bad run, so "beat the stored best"
+	# is a real bar to clear there even on a first-ever attempt. Streak and
+	# survival time aren't: a first run always accumulates *some* elapsed time
+	# (you can't survive 0ms) and can rack up a streak of chance alone, so
+	# comparing against an unset 0 baseline trivially "wins" regardless of
+	# skill - is_new_best is celebrated (screen wash, hit-stop, echo burst),
+	# not just recorded, so a first attempt auto-celebrating a meaningless
+	# record read as anticlimactic against a 0-score run. Same guard
+	# `run_quality`'s tier calc already uses below (prev_best_score > 0).
+	# The stored value itself still updates on a first run regardless -
+	# only the celebration flag requires a real prior best to have been beaten.
 	var streak_key := "beststreak_endless_%s" % suffix
 	best_streak = SaveManager.load_high_score(streak_key)
-	is_new_best_streak = run_best_streak > best_streak
-	if is_new_best_streak:
+	var had_prior_streak := best_streak > 0
+	is_new_best_streak = had_prior_streak and run_best_streak > best_streak
+	if run_best_streak > best_streak:
 		best_streak = run_best_streak
 		SaveManager.save_high_score(streak_key, run_best_streak)
 
 	var time_key := "besttime_endless_%s" % suffix
 	var run_ms: int = int(round(run_time * 1000.0))
 	var best_ms: int = SaveManager.load_high_score(time_key)
-	is_new_best_time = run_ms > best_ms
-	if is_new_best_time:
+	var had_prior_time := best_ms > 0
+	is_new_best_time = had_prior_time and run_ms > best_ms
+	if run_ms > best_ms:
 		best_ms = run_ms
 		SaveManager.save_high_score(time_key, run_ms)
 	best_time = float(best_ms) / 1000.0
 
 	# Measured against the record the run was actually chasing, not the one it
 	# just set - otherwise every new best would score exactly 1.0 and the tier
-	# would carry no information. A first-ever run (no stored best) has nothing
-	# to be measured against, so it lands mid-tier rather than bottom.
+	# would carry no information. The final branch (no stored best AND not a
+	# new best) can only be reached with final_score == 0: any positive score
+	# with no prior record would already have satisfied is_new_best above. It
+	# used to default to 0.5 ("nothing to measure against, land mid-tier"), but
+	# since this is always a literal zero-score run, that landed EndlessEndScreen's
+	# tier-1 burst/audio on a run that scored nothing - the exact "ring animation
+	# on a 0 score" bug this replaces. A true zero belongs at the bottom tier
+	# (silent), not the middle one.
 	if is_new_best:
 		run_quality = 1.0
 	elif prev_best_score > 0:
 		run_quality = clampf(float(final_score) / float(prev_best_score), 0.0, 1.0)
 	else:
-		run_quality = 0.5
+		run_quality = 0.0
 
 	GameManager.set_state(GameManager.GameState.ENDLESS_END)
 

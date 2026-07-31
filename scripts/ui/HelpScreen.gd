@@ -4,7 +4,6 @@ class_name HelpScreen
 const NEON := Color("22d3ff")
 const BACK_ACCENT := NEON  # same cyan as the title screen's ARCADE button
 const TEXT_FILL := Color("dfe3ee")
-const VIEWPORT_SIZE := Vector2(1600, 900)
 
 # TIMER TYPES / POWERUPS / SCORING all share this one size and colour (NEON) -
 # three section headings that used to be three different sizes (32/42/36) and
@@ -14,35 +13,114 @@ const SECTION_HEADING_SIZE := 36
 
 const PAGE_COUNT := 3
 
+# Measured content: page 1 needs 701 in landscape, 870 in portrait (see the
+# page_area comment in _build). Both carry a margin above the measured figure.
+const PAGE_AREA_HEIGHT_LANDSCAPE := 640.0
+const PAGE_AREA_HEIGHT_PORTRAIT := 900.0
+
 var _pages: Array[Control] = []
 var _page_nav: PageNav
 
+
+# Portrait is a 900-wide canvas rather than 1600, so this screen's landscape type
+# sizes leave it reading as a small block adrift in the middle of a phone screen.
+# One factor scales type, spacing and control footprints together, keeping the
+# proportions intact. Chosen from the measured content: content measures 484 wide; 1.5 puts it at 726 of 900.
+const PORTRAIT_SCALE := 1.5
+
+# Matches every other screen's page-title size (CreditsScreen/OptionsPanel),
+# confirmed with the user 2026-07-31 - this used to be its own smaller size and
+# read inconsistent against screens reached from the same title-screen row.
+const PAGE_HEADING_SIZE := 56
+
+func _s() -> float:
+	return PORTRAIT_SCALE if Layout.is_portrait() else 1.0
+
+# Side margins shrink in portrait instead of growing with the type scale: at
+# _fs(80) they ate 240 of a 900-unit canvas, leaving less room for the widest
+# row than landscape had at a third of the relative cost.
+func _side_margin() -> int:
+	return 40 if Layout.is_portrait() else 80
+
+# The description column is the widest thing on this screen. Landscape has 1440
+# units of content width and this comfortably takes 600 of it; portrait has 820,
+# so it is sized to what is actually left beside the name column rather than
+# being scaled up with the type - autowrap turns the narrower column into more
+# lines instead of running off the canvas.
+const DESC_WIDTH_LANDSCAPE := 760.0
+const DESC_WIDTH_PORTRAIT := 510.0
+
+func _desc_width() -> float:
+	return DESC_WIDTH_PORTRAIT if Layout.is_portrait() else DESC_WIDTH_LANDSCAPE
+
+func _fs(base: int) -> int:
+	return roundi(base * _s())
+
+var _backdrop: ColorRect
+var _margin: MarginContainer
+var _built_portrait: bool = false
+
 func _ready() -> void:
 	_build()
+	Layout.changed.connect(_apply_canvas)
+	_apply_canvas()
+
+
+# A plain resize is a re-measure; an orientation change rebuilds, because the
+# portrait scale feeds every font size and a Label's is fixed once created.
+func _apply_canvas() -> void:
+	size = Layout.canvas_size
+	if _built_portrait != Layout.is_portrait():
+		_rebuild()
+		return
+	if _margin != null:
+		_margin.size = Layout.canvas_size
+	_apply_overscan()
+
+func _rebuild() -> void:
+	for child in get_children():
+		remove_child(child)
+		child.queue_free()
+	_backdrop = null
+	_margin = null
+	# _build() appends to _pages every time it runs - without clearing it first,
+	# a rebuild leaves the array holding the just-freed old pages ahead of the
+	# new ones. _on_page_changed() then sets .visible on those freed references
+	# (a silent no-op) instead of the new pages actually in the tree, which is
+	# what left the whole page blank after switching orientation on-device.
+	_pages.clear()
+	_build()
+	_apply_overscan()
+
+func _apply_overscan() -> void:
+	ScreenLayout.cover(_backdrop)
 
 func _build() -> void:
+	_built_portrait = Layout.is_portrait()
 	position = Vector2.ZERO
-	size = VIEWPORT_SIZE
+	size = Layout.canvas_size
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	var backdrop := ColorRect.new()
-	backdrop.position = Vector2.ZERO
-	backdrop.size = VIEWPORT_SIZE
+	_backdrop = ColorRect.new()
+	var backdrop := _backdrop
+	backdrop.position = Layout.overscan_position
+	backdrop.size = Layout.overscan_size
 	backdrop.color = Color(0.03, 0.03, 0.05, 1.0)
 	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(backdrop)
 
-	var margin := MarginContainer.new()
+	_margin = MarginContainer.new()
+	var margin := _margin
 	margin.position = Vector2.ZERO
-	margin.size = VIEWPORT_SIZE
-	margin.add_theme_constant_override("margin_left", 80)
-	margin.add_theme_constant_override("margin_right", 80)
-	margin.add_theme_constant_override("margin_top", 24)
-	margin.add_theme_constant_override("margin_bottom", 24)
+	margin.size = Layout.canvas_size
+	margin.add_theme_constant_override("margin_left", _side_margin())
+	margin.add_theme_constant_override("margin_right", _side_margin())
+	margin.add_theme_constant_override("margin_top", _fs(24))
+	margin.add_theme_constant_override("margin_bottom", _fs(24))
 	add_child(margin)
 
 	var outer := VBoxContainer.new()
-	outer.add_theme_constant_override("separation", 14)
+	outer.add_theme_constant_override("separation", _fs(14))
 	outer.alignment = BoxContainer.ALIGNMENT_CENTER
 	margin.add_child(outer)
 
@@ -50,12 +128,17 @@ func _build() -> void:
 	# the layout doesn't jump when switching pages. Sized to the tallest page's
 	# actual content (page 1's 6-row type table) plus a little slack - a page's
 	# own children aren't clipped to this rect, so an under-sized reservation
-	# doesn't just get cropped, it visibly paints over the nav/back rows below
-	# it (exactly what the Decay row's longer description exposed here). Not a
-	# round number, so it doesn't overflow the 900px viewport once the
-	# heading/nav/back rows around it are accounted for.
+	# doesn't just get cropped, it visibly paints over the nav/back rows below it
+	# (exactly what the Decay row's longer description exposed, twice now: once
+	# at the original 21pt body size, and again when that was bumped to 24pt for
+	# readability - a bigger font wraps that row to a third line, which needs
+	# more height than 21pt's two lines did). Measured directly per orientation
+	# rather than scaled by one factor, since landscape and portrait no longer
+	# need the same amount of slack once the description column's width differs
+	# between them (_desc_width()).
 	var page_area := Control.new()
-	page_area.custom_minimum_size = Vector2(0, 620)
+	page_area.custom_minimum_size = Vector2(0,
+		PAGE_AREA_HEIGHT_PORTRAIT if Layout.is_portrait() else PAGE_AREA_HEIGHT_LANDSCAPE)
 	page_area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	outer.add_child(page_area)
 
@@ -71,7 +154,7 @@ func _build() -> void:
 	# just widening outer's separation) keeps that gap without also pushing
 	# the back button further from the nav row than it needs to be.
 	var nav_spacer := Control.new()
-	nav_spacer.custom_minimum_size = Vector2(0, 18)
+	nav_spacer.custom_minimum_size = Vector2(0, 18) * _s()
 	outer.add_child(nav_spacer)
 
 	_page_nav = PageNav.new()
@@ -89,20 +172,20 @@ func _build() -> void:
 
 func _build_page_1() -> Control:
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 18)
+	col.add_theme_constant_override("separation", _fs(18))
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 
 	var title := WaveHeading.new()
 	col.add_child(title)
-	title.configure("HOW TO PLAY", 42, TEXT_FILL, NEON)
+	title.configure("HOW TO PLAY", _fs(PAGE_HEADING_SIZE), TEXT_FILL, NEON)
 
 	col.add_child(_line("Click a timer the instant it hits 0.00.", 24, TEXT_FILL))
 	col.add_child(_heading("TIMER TYPES", SECTION_HEADING_SIZE, NEON))
 
 	var types_grid := GridContainer.new()
 	types_grid.columns = 2
-	types_grid.add_theme_constant_override("h_separation", 28)
-	types_grid.add_theme_constant_override("v_separation", 12)
+	types_grid.add_theme_constant_override("h_separation", _fs(28))
+	types_grid.add_theme_constant_override("v_separation", _fs(12))
 	var types_wrap := CenterContainer.new()
 	types_wrap.add_child(types_grid)
 	col.add_child(types_wrap)
@@ -115,17 +198,17 @@ func _build_page_1() -> Control:
 
 func _build_page_2() -> Control:
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 18)
+	col.add_theme_constant_override("separation", _fs(18))
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 
 	col.add_child(_heading("POWERUPS", SECTION_HEADING_SIZE, NEON))
 	col.add_child(_line("Endless mode only. They recharge as you play.",
-		22, TEXT_FILL))
+		24, TEXT_FILL))
 
 	var grid := GridContainer.new()
 	grid.columns = 3
-	grid.add_theme_constant_override("h_separation", 20)
-	grid.add_theme_constant_override("v_separation", 18)
+	grid.add_theme_constant_override("h_separation", _fs(20))
+	grid.add_theme_constant_override("v_separation", _fs(18))
 	var wrap := CenterContainer.new()
 	wrap.add_child(grid)
 	col.add_child(wrap)
@@ -140,14 +223,14 @@ func _add_powerup_row(grid: GridContainer, kind: int) -> void:
 	# Same drawn glyph the in-game buttons use, so the legend and the board
 	# can't drift apart.
 	var icon := PowerupIcon.new(kind)
-	icon.custom_minimum_size = Vector2(46, 46)
-	icon.size = Vector2(46, 46)
+	icon.custom_minimum_size = Vector2(46, 46) * _s()
+	icon.size = Vector2(46, 46) * _s()
 	var icon_wrap := CenterContainer.new()
 	icon_wrap.add_child(icon)
 	grid.add_child(icon_wrap)
 
 	var name_cell := VBoxContainer.new()
-	name_cell.add_theme_constant_override("separation", 0)
+	name_cell.add_theme_constant_override("separation", _fs(0))
 	name_cell.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	# No keybind hint to append on mobile (PowerupSystem.key_hint() returns ""
 	# there, since there's no keyboard) - falls back to the bare name rather
@@ -156,27 +239,27 @@ func _add_powerup_row(grid: GridContainer, kind: int) -> void:
 	var name_text := "%s  %s" % [PowerupSystem.name_of(kind), hint] if not hint.is_empty() \
 		else PowerupSystem.name_of(kind)
 	name_cell.add_child(_cell_label(name_text, 24, accent))
-	name_cell.add_child(_cell_label(Powerups.cooldown_text(kind), 18, Color(1, 1, 1, 0.5)))
+	name_cell.add_child(_cell_label(Powerups.cooldown_text(kind), 20, Color(1, 1, 1, 0.5)))
 	grid.add_child(name_cell)
 
-	grid.add_child(_wrap_cell_label(Powerups.describe(kind), 21, TEXT_FILL))
+	grid.add_child(_wrap_cell_label(Powerups.describe(kind), 24, TEXT_FILL))
 
 # --- Page 3: scoring ---------------------------------------------------------
 
 func _build_page_3() -> Control:
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 20)
+	col.add_theme_constant_override("separation", _fs(20))
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 
 	col.add_child(_heading("SCORING", SECTION_HEADING_SIZE, NEON))
 	col.add_child(_line(
 		"Points scale with how close to 0.00 you stop - closer scores more.",
-		22, TEXT_FILL))
+		24, TEXT_FILL))
 
 	var scoring_grid := GridContainer.new()
 	scoring_grid.columns = 3
-	scoring_grid.add_theme_constant_override("h_separation", 40)
-	scoring_grid.add_theme_constant_override("v_separation", 16)
+	scoring_grid.add_theme_constant_override("h_separation", _fs(40))
+	scoring_grid.add_theme_constant_override("v_separation", _fs(16))
 	var scoring_wrap := CenterContainer.new()
 	scoring_wrap.add_child(scoring_grid)
 	col.add_child(scoring_wrap)
@@ -229,17 +312,17 @@ func _line(text: String, font_size: int, color: Color) -> Label:
 
 func _add_grade_row(grid: GridContainer, grade: String, window: String, effect: String, color: Color) -> void:
 	grid.add_child(_cell_label(grade, 24, color))
-	grid.add_child(_cell_label(window, 22, TEXT_FILL))
-	grid.add_child(_cell_label(effect, 22, TEXT_FILL))
+	grid.add_child(_cell_label(window, 24, TEXT_FILL))
+	grid.add_child(_cell_label(effect, 24, TEXT_FILL))
 
 func _add_type_row(grid: GridContainer, t: int) -> void:
 	var name_cell := HBoxContainer.new()
 	name_cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_cell.add_theme_constant_override("separation", 12)
+	name_cell.add_theme_constant_override("separation", _fs(12))
 
 	var swatch := ColorRect.new()
 	swatch.color = TimerTypeInfo.color_of(t)
-	swatch.custom_minimum_size = Vector2(22, 22)
+	swatch.custom_minimum_size = Vector2(22, 22) * _s()
 	# Without this, the swatch (a plain Control that fills by default) stretches
 	# to match the row's height - and rows vary in height because the
 	# description column wraps to 1 or 2 lines, so swatches ended up different
@@ -249,7 +332,7 @@ func _add_type_row(grid: GridContainer, t: int) -> void:
 	name_cell.add_child(_cell_label(TimerTypeInfo.name_of(t), 24, TimerTypeInfo.color_of(t)))
 	grid.add_child(name_cell)
 
-	grid.add_child(_wrap_cell_label(TimerTypeInfo.desc_of(t), 21, TEXT_FILL))
+	grid.add_child(_wrap_cell_label(TimerTypeInfo.desc_of(t), 24, TEXT_FILL))
 
 # Plain cell: hugs its own text, no forced minimum width. Used wherever text is
 # short and fixed (grade names, distance windows, effect text) - giving every
@@ -269,14 +352,14 @@ func _wrap_cell_label(text: String, font_size: int, color: Color) -> Label:
 	var l := _cell_label(text, font_size, color)
 	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(600, 0)
+	l.custom_minimum_size = Vector2(_desc_width(), 0)
 	return l
 
 func _button(text: String, accent: Color) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(200, 64)
-	button.add_theme_font_size_override("font_size", 28)
+	button.custom_minimum_size = Vector2(200, 64) * _s()
+	button.add_theme_font_size_override("font_size", _fs(28))
 	button.add_theme_color_override("font_color", Color.WHITE)
 	button.add_theme_color_override("font_outline_color", accent)
 	button.add_theme_constant_override("outline_size", 4)
@@ -294,3 +377,5 @@ func _box(accent: Color, darken: float) -> StyleBoxFlat:
 	sb.border_color = accent
 	sb.set_content_margin_all(10)
 	return sb
+
+

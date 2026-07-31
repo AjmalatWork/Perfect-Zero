@@ -5,9 +5,11 @@ class_name PauseMenu
 # freeze everything (timers + tick audio + Endless spawning). This node runs with
 # PROCESS_MODE_ALWAYS so it stays interactive while the rest of the tree is frozen.
 
-const VIEWPORT_SIZE := Vector2(1600, 900)
 # Authored (inset-free) position; _apply_safe_area() offsets from this.
-const PAUSE_BUTTON_POS := Vector2(VIEWPORT_SIZE.x - 92, 28)
+# Authored (inset-free) corner position; _apply_safe_area() offsets from this.
+# A function rather than a const now that the canvas it hangs off transposes.
+func _pause_button_pos() -> Vector2:
+	return Vector2(Layout.canvas_size.x - 92, 28)
 const NEON := Color("22d3ff")
 const RED := Color("ff2e5e")
 const GREY := Color("8b90a8")
@@ -20,6 +22,8 @@ const TEXT_FILL := Color("dfe3ee")
 
 var _pause_button: Button
 var _menu: Control
+var _dim: ColorRect
+var _center: CenterContainer
 var _options: OptionsPanel
 var _paused: bool = false
 var _resuming: bool = false
@@ -28,24 +32,43 @@ var _menu_buttons: Array[Button] = []
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	position = Vector2.ZERO
-	size = VIEWPORT_SIZE
+	size = Layout.canvas_size
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	z_index = 100  # above all gameplay z_index usage (timer digits/signs peak at 20)
 	_build()
 	GameManager.state_changed.connect(_on_state_changed)
 	SafeArea.changed.connect(_apply_safe_area)
-	_apply_safe_area()
+	Layout.changed.connect(_apply_canvas)
+	if help_bubble != null:
+		help_bubble.open_state_changed.connect(_on_help_bubble_open_state_changed)
+	_apply_canvas()
 	_update_pause_button_visibility(GameManager.current_state)
+
+# Reflow only. Unlike the screens that rebuild on an orientation change, this
+# one is a dim plus a centred button column and carries live paused state - a
+# rebuild mid-pause would drop the menu out from under the player.
+func _apply_canvas() -> void:
+	size = Layout.canvas_size
+	if _menu != null:
+		_menu.position = Vector2.ZERO
+		_menu.size = Layout.canvas_size
+	if _center != null:
+		_center.size = Layout.canvas_size
+	ScreenLayout.cover(_dim)
+	_apply_safe_area()
 
 # Top-right corner, immediately right of the Help icon - same cutout/rounded
 # corner exposure, so it's inset the same way. Only the pause button needs
 # this: the menu itself is a full-rect dim with centred content, which no
 # inset can clip.
 func _apply_safe_area() -> void:
-	_pause_button.position = PAUSE_BUTTON_POS + Vector2(-SafeArea.right, SafeArea.top)
+	_pause_button.position = _pause_button_pos() + Vector2(-SafeArea.right, SafeArea.top)
 
 func _on_state_changed(new_state: int) -> void:
 	_update_pause_button_visibility(new_state)
+
+func _on_help_bubble_open_state_changed() -> void:
+	_update_pause_button_visibility(GameManager.current_state)
 
 func _update_pause_button_visibility(state: int) -> void:
 	var in_game := state == GameManager.GameState.PLAYING or state == GameManager.GameState.ENDLESS_PLAYING
@@ -205,7 +228,7 @@ func _build() -> void:
 	# (notably HTML5/Web) lacks that Unicode character and shows tofu boxes.
 	_pause_button = _button("", GREY)
 	_pause_button.custom_minimum_size = Vector2(64, 64)
-	_pause_button.position = PAUSE_BUTTON_POS
+	_pause_button.position = _pause_button_pos()
 	_pause_button.pressed.connect(pause)
 	add_child(_pause_button)
 	_build_pause_icon(_pause_button)
@@ -213,7 +236,7 @@ func _build() -> void:
 	# Pause menu (dim + buttons), hidden until paused.
 	_menu = Control.new()
 	_menu.position = Vector2.ZERO
-	_menu.size = VIEWPORT_SIZE
+	_menu.size = Layout.canvas_size
 	_menu.visible = false
 	add_child(_menu)
 
@@ -222,15 +245,17 @@ func _build() -> void:
 	# compete with the tertiary row's own borderless buttons (see _button()'s
 	# TERTIARY case below, which also got a touch more backing for the same
 	# reason).
-	var dim := ColorRect.new()
-	dim.position = Vector2.ZERO
-	dim.size = VIEWPORT_SIZE
+	_dim = ColorRect.new()
+	var dim := _dim
+	dim.position = Layout.overscan_position
+	dim.size = Layout.overscan_size
 	dim.color = Color(0.02, 0.02, 0.04, 0.93)
 	_menu.add_child(dim)
 
 	var center := CenterContainer.new()
 	center.position = Vector2.ZERO
-	center.size = VIEWPORT_SIZE
+	center.size = Layout.canvas_size
+	_center = center
 	_menu.add_child(center)
 
 	# Separation left at 0 - every gap in this column is an explicit _spacer()

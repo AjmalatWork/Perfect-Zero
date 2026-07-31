@@ -25,6 +25,11 @@ var _time: float = 0.0
 var _amplitude: float = DEFAULT_AMPLITUDE
 var _speed: float = DEFAULT_SPEED
 var _phase_step: float = DEFAULT_PHASE_STEP
+# Index this heading's first letter would have had in a longer run of text.
+# Splitting a heading across two lines (portrait's "PERFECT" / "ZERO") otherwise
+# restarts the phase on the second line, so the two would bob in lockstep with
+# each other instead of continuing the one travelling wave.
+var _phase_start: int = 0
 
 func _init() -> void:
 	alignment = BoxContainer.ALIGNMENT_CENTER
@@ -33,7 +38,8 @@ func _init() -> void:
 # outline_size = 0 skips the outline entirely (EndlessModeSelect's subtler
 # secondary headings use this) rather than drawing a zero-width one.
 func configure(text: String, font_size: int, fill: Color, outline: Color,
-		outline_size: int = 5) -> void:
+		outline_size: int = 5, phase_start: int = 0) -> void:
+	_phase_start = phase_start
 	for ch in text:
 		var letter := Label.new()
 		letter.text = ch
@@ -67,4 +73,4 @@ func _process(delta: float) -> void:
 	_time += delta
 	for i in range(_letters.size()):
 		_letters[i].position.y = _base_y[i] \
-			+ sin(_time * _speed + i * _phase_step) * _amplitude
+			+ sin(_time * _speed + (i + _phase_start) * _phase_step) * _amplitude

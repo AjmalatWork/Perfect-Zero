@@ -28,7 +28,6 @@ signal shield_armed                          # window opened
 signal shield_expired                        # window closed having caught nothing
 signal shield_absorbed(origin_global: Vector2)  # window closed by catching a FAIL
 
-const VIEWPORT_SIZE := Vector2(1600, 900)
 
 enum Kind { SHIELD, CLEAR_ALL, OVERCLOCK }
 
@@ -95,7 +94,7 @@ func register_button_origin(kind: int, global_centre: Vector2) -> void:
 # Falls back to the screen centre when the bar hasn't registered - Campaign
 # never builds one - so callers never need to null-check.
 func button_origin(kind: int) -> Vector2:
-	return _button_origins.get(kind, VIEWPORT_SIZE * 0.5)
+	return _button_origins.get(kind, Layout.canvas_size * 0.5)
 
 # --- Shield ---------------------------------------------------------------
 @export var shield_window_duration: float = 10.0

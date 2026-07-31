@@ -1,7 +1,6 @@
 extends Control
 class_name EndlessHUD
 
-const VIEWPORT_SIZE := Vector2(1600, 900)
 const NEON := Color("22d3ff")
 const GOLD := Color("ffd23f")
 const FAIL_RED := Color("ff2e5e")
@@ -27,16 +26,21 @@ var _meter_fill: ColorRect
 var _meter_target: float = 0.0
 var _bottom_row: Control
 
-# Authored (inset-free) position; _apply_safe_area() offsets from this.
-const BOTTOM_ROW_POS := Vector2(0, VIEWPORT_SIZE.y - 60)
+# Authored (inset-free) position; _apply_safe_area() offsets from this. A
+# function rather than a const now that the canvas height differs by orientation.
+func _bottom_row_pos() -> Vector2:
+	return Vector2(0, Layout.canvas_size.y - 60)
 
 func _ready() -> void:
 	position = Vector2.ZERO
-	size = VIEWPORT_SIZE
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_build()
 	SafeArea.changed.connect(_apply_safe_area)
-	_apply_safe_area()
+	# Repositioned rather than rebuilt on an orientation flip: these labels carry
+	# live text and in-flight tweens (the streak popup especially), so tearing
+	# them down mid-run would drop state the run still needs.
+	Layout.changed.connect(_apply_canvas_metrics)
+	_apply_canvas_metrics()
 
 	ScoreManager.tally_changed.connect(_on_tally_changed)
 	ScoreManager.campaign_total_changed.connect(_on_total_changed)
@@ -47,17 +51,17 @@ func _ready() -> void:
 func _build() -> void:
 	_equation = _make_label(56, NEON)
 	_equation.position = Vector2(0, 14)
-	_equation.size = Vector2(VIEWPORT_SIZE.x, 72)
+	_equation.size = Vector2(Layout.canvas_size.x, 72)
 	add_child(_equation)
 
 	_total = _make_label(26, GOLD.darkened(0.15))
 	_total.position = Vector2(0, 90)
-	_total.size = Vector2(VIEWPORT_SIZE.x, 34)
+	_total.size = Vector2(Layout.canvas_size.x, 34)
 	add_child(_total)
 
 	# Combo meter - the live-scoring vessel the numeric HUD lacks.
 	_meter_track = ColorRect.new()
-	_meter_track.position = Vector2((VIEWPORT_SIZE.x - METER_WIDTH) * 0.5, 126)
+	_meter_track.position = Vector2((Layout.canvas_size.x - METER_WIDTH) * 0.5, 126)
 	_meter_track.size = Vector2(METER_WIDTH, METER_HEIGHT)
 	_meter_track.color = Color(1, 1, 1, 0.10)
 	_meter_track.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -72,7 +76,7 @@ func _build() -> void:
 
 	_streak_popup = _make_label(38, GOLD)
 	_streak_popup.position = Vector2(0, 140)
-	_streak_popup.size = Vector2(VIEWPORT_SIZE.x, 46)
+	_streak_popup.size = Vector2(Layout.canvas_size.x, 46)
 	_streak_popup.modulate.a = 0.0
 	add_child(_streak_popup)
 
@@ -80,14 +84,14 @@ func _build() -> void:
 	# 60px off the bottom edge - exactly where Android's gesture navigation bar
 	# lands - so it gets lifted by the safe-area inset (see _apply_safe_area).
 	_bottom_row = Control.new()
-	_bottom_row.position = BOTTOM_ROW_POS
-	_bottom_row.size = Vector2(VIEWPORT_SIZE.x, 50)
+	_bottom_row.position = _bottom_row_pos()
+	_bottom_row.size = Vector2(Layout.canvas_size.x, 50)
 	_bottom_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_bottom_row)
 
 	var center := CenterContainer.new()
 	center.position = Vector2.ZERO
-	center.size = Vector2(VIEWPORT_SIZE.x, 50)
+	center.size = Vector2(Layout.canvas_size.x, 50)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_bottom_row.add_child(center)
 
@@ -100,7 +104,28 @@ func _build() -> void:
 # vertical extents, so a side cutout can't reach them.
 func _apply_safe_area() -> void:
 	if _bottom_row != null:
-		_bottom_row.position = BOTTOM_ROW_POS - Vector2(0, SafeArea.bottom)
+		_bottom_row.position = _bottom_row_pos() - Vector2(0, SafeArea.bottom)
+
+# Every readout here is either full-canvas-width or centred on it, so an
+# orientation flip is purely a re-measure - nothing moves to a different part of
+# the screen the way the powerup cluster does.
+func _apply_canvas_metrics() -> void:
+	size = Layout.canvas_size
+	var w: float = Layout.canvas_size.x
+	if _equation != null:
+		_equation.size = Vector2(w, 72)
+	if _total != null:
+		_total.size = Vector2(w, 34)
+	if _meter_track != null:
+		_meter_track.position = Vector2((w - METER_WIDTH) * 0.5, 126)
+	if _streak_popup != null:
+		_streak_popup.size = Vector2(w, 46)
+	if _bottom_row != null:
+		_bottom_row.size = Vector2(w, 50)
+		for child in _bottom_row.get_children():
+			if child is Control:
+				child.size = Vector2(w, 50)
+	_apply_safe_area()
 
 func _on_tally_changed(tally: int, mult: float) -> void:
 	_equation.text = "%d   ×   %.1f" % [tally, mult]

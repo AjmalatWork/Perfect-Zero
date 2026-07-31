@@ -30,6 +30,14 @@ func start_from_index(index: int, reset_base: bool = true) -> void:
 	if index < 0 or index >= stage_count:
 		push_error("CampaignNavigator: invalid stage index %d (campaign has %d stages). Did you populate Campaign.tres's stages array?" % [index, stage_count])
 		return
+	# A pause-menu RESTART (retry()) and advancing to the next stage both go
+	# PLAYING -> PLAYING - pausing never touches GameManager.current_state, and
+	# neither call ever leaves PLAYING in between - so Juice's own "leaving
+	# play" cleanup (see reset_run_effects()) never fires for either. Without
+	# this, a stage retried/advanced while a PERFECT's heat/streak/hit-stop was
+	# still settling handed that leftover animation to the new stage - same
+	# root cause as the Endless restart fix in EndlessRunner.start_run().
+	Juice.reset_run_effects()
 	current_index = index
 	GameManager.set_state(GameManager.GameState.PLAYING)
 

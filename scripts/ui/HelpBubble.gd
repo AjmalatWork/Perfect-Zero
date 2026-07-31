@@ -13,20 +13,26 @@ class_name HelpBubble
 # underneath; the freeze is what stops time silently advancing behind it.
 # Closing uses the same shared wipe PauseMenu's RESUME uses (Juice.resume_wipe).
 
-const VIEWPORT_SIZE := Vector2(1600, 900)
 const NEON := Color("22d3ff")
 const GOLD := Color("ffd23f")
 const TEXT_FILL := Color("dfe3ee")
 
-# Left of PauseMenu's pause button (which sits at x=1508..1572, y=28..92) with
-# clearance, so the two never collide regardless of which is added to the tree
-# first.
-const ICON_POS := Vector2(1428, 28)
+# Sits left of PauseMenu's pause button with clearance, so the two never collide
+# regardless of which is added to the tree first. Held as an inset from the right
+# edge rather than the absolute 1428 it used to be: that is the landscape figure,
+# and it would put the icon 500 units off the right edge of a 900-wide portrait
+# canvas.
+const ICON_RIGHT_INSET := 172.0
 const ICON_SIZE := Vector2(64, 64)
 
 const BADGE_COLOR := Color("ffd23f")
 const BADGE_PULSE_HZ := 1.6
 const BADGE_SIZE := 16.0
+
+# PauseMenu's own pause button visibility depends on is_open (see
+# _update_pause_button_visibility there), which it can only re-check when
+# told to - this is that notification.
+signal open_state_changed
 
 @export var stage_controller: StageController
 @export var endless_runner: EndlessRunner
@@ -38,18 +44,36 @@ var _badge: Control
 var _bubble: Control       # dim + panel, faded as one unit by resume_wipe
 var _heading_label: Label
 var _panel_pages: Array[Control] = []
+var _dim: ColorRect
 var _page_nav: PageNav
 var _closing: bool = false
 
+func _icon_pos() -> Vector2:
+	return Vector2(Layout.canvas_size.x - ICON_RIGHT_INSET, 28)
+
+
+# Portrait is a 900-wide canvas rather than 1600, so this screen's landscape type
+# sizes leave it reading as a small block adrift in the middle of a phone screen.
+# One factor scales type, spacing and control footprints together, keeping the
+# proportions intact. Chosen from the measured content: the panel already measures 736 wide, so this only has 1.22x of headroom.
+const PORTRAIT_SCALE := 1.15
+
+func _s() -> float:
+	return PORTRAIT_SCALE if Layout.is_portrait() else 1.0
+
+func _fs(base: int) -> int:
+	return roundi(base * _s())
+
 func _ready() -> void:
 	position = Vector2.ZERO
-	size = VIEWPORT_SIZE
+	size = Layout.canvas_size
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	z_index = 90  # below PauseMenu (100), above ordinary gameplay (peaks at 20)
 	_build()
 	GameManager.state_changed.connect(_on_state_changed)
 	SafeArea.changed.connect(_apply_safe_area)
-	_apply_safe_area()
+	Layout.changed.connect(_apply_canvas)
+	_apply_canvas()
 	_update_icon_visibility(GameManager.current_state)
 
 # The icon sits hard against the top-right corner, which in landscape is
@@ -58,8 +82,21 @@ func _ready() -> void:
 # since it's positioned relative to the icon rather than parented to it.
 # Displays with no insets (desktop, web, phones without cutouts) report zero
 # and leave both exactly where they were authored.
+#
+# Reflow only - this overlay carries live open/closed state during play, so a
+# rebuild on rotation would tear the panel out from under the player mid-read.
+func _apply_canvas() -> void:
+	size = Layout.canvas_size
+	# _bubble and its dim are PRESET_FULL_RECT against this control, which stops
+	# at the canvas; the dim has to reach past it to cover the pillarbox bands.
+	if _dim != null and _bubble != null:
+		_dim.set_anchors_preset(Control.PRESET_TOP_LEFT)
+		_dim.position = Layout.overscan_position
+		_dim.size = Layout.overscan_size
+	_apply_safe_area()
+
 func _apply_safe_area() -> void:
-	var origin := ICON_POS + Vector2(-SafeArea.right, SafeArea.top)
+	var origin := _icon_pos() + Vector2(-SafeArea.right, SafeArea.top)
 	_icon_button.position = origin
 	_badge.position = origin + Vector2(ICON_SIZE.x - BADGE_SIZE * 0.6, -BADGE_SIZE * 0.4)
 
@@ -149,6 +186,7 @@ func open() -> void:
 	_bubble.modulate.a = 0.0
 	var tween := create_tween()
 	tween.tween_property(_bubble, "modulate:a", 1.0, 0.15)
+	open_state_changed.emit()
 
 func close() -> void:
 	if not is_open or _closing:
@@ -161,6 +199,7 @@ func close() -> void:
 	is_open = false
 	_closing = false
 	_update_icon_visibility(GameManager.current_state)
+	open_state_changed.emit()
 
 const PAGE_TITLES := ["TIMER TYPES", "POWERUPS"]
 
@@ -175,9 +214,9 @@ func _on_page_changed(index: int) -> void:
 func _build() -> void:
 	_icon_button = Button.new()
 	_icon_button.text = "?"
-	_icon_button.position = ICON_POS
+	_icon_button.position = _icon_pos()
 	_icon_button.custom_minimum_size = ICON_SIZE
-	_icon_button.add_theme_font_size_override("font_size", 30)
+	_icon_button.add_theme_font_size_override("font_size", _fs(30))
 	_icon_button.add_theme_color_override("font_color", Color.WHITE)
 	_icon_button.add_theme_color_override("font_outline_color", NEON)
 	_icon_button.add_theme_constant_override("outline_size", 4)
@@ -196,7 +235,7 @@ func _build() -> void:
 
 	_badge = Control.new()
 	_badge.custom_minimum_size = Vector2(BADGE_SIZE, BADGE_SIZE)
-	_badge.position = ICON_POS + Vector2(ICON_SIZE.x - BADGE_SIZE * 0.6, -BADGE_SIZE * 0.4)
+	_badge.position = _icon_pos() + Vector2(ICON_SIZE.x - BADGE_SIZE * 0.6, -BADGE_SIZE * 0.4)
 	_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_badge.visible = false
 	var badge_box := StyleBoxFlat.new()
@@ -214,7 +253,8 @@ func _build() -> void:
 	_bubble.visible = false
 	add_child(_bubble)
 
-	var dim := ColorRect.new()
+	_dim = ColorRect.new()
+	var dim := _dim
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.color = Color(0, 0, 0, 0.78)
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP  # blocks clicks to any live timer underneath
@@ -237,8 +277,10 @@ func _build() -> void:
 	center.add_child(panel)
 
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 16)
-	col.custom_minimum_size = Vector2(680, 0)
+	col.add_theme_constant_override("separation", _fs(16))
+	# Widened from 680 to fit the name column (swatch + 25pt label) alongside
+	# the wrap cell's now-500-wide budget without squeezing either.
+	col.custom_minimum_size = Vector2(700, 0) * _s()
 	panel.add_child(col)
 
 	_heading_label = _heading(PAGE_TITLES[0], 30, NEON)
@@ -247,9 +289,10 @@ func _build() -> void:
 	# Reserved height, not clipped - a page's actual content painting past this
 	# rect would overlap the nav/close row below it rather than just being
 	# cropped, so this has to fit the tallest page's real content (same issue
-	# HelpScreen's own page area has, see its comment).
+	# HelpScreen's own page area has, see its comment). Bumped from 430 to fit
+	# the taller 24pt wrapped rows now that body text isn't the pre-pass 19pt.
 	var page_area := Control.new()
-	page_area.custom_minimum_size = Vector2(0, 430)
+	page_area.custom_minimum_size = Vector2(0, 500) * _s()
 	col.add_child(page_area)
 
 	var types_page := _build_types_page()
@@ -277,8 +320,8 @@ func _build_types_page() -> Control:
 	var wrap := CenterContainer.new()
 	var grid := GridContainer.new()
 	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 24)
-	grid.add_theme_constant_override("v_separation", 10)
+	grid.add_theme_constant_override("h_separation", _fs(24))
+	grid.add_theme_constant_override("v_separation", _fs(10))
 	wrap.add_child(grid)
 	for t in TimerTypeInfo.ORDER:
 		_add_type_row(grid, t)
@@ -286,13 +329,13 @@ func _build_types_page() -> Control:
 
 func _add_type_row(grid: GridContainer, t: int) -> void:
 	var name_cell := HBoxContainer.new()
-	name_cell.add_theme_constant_override("separation", 10)
+	name_cell.add_theme_constant_override("separation", _fs(10))
 	var swatch := ColorRect.new()
 	swatch.color = TimerTypeInfo.color_of(t)
-	swatch.custom_minimum_size = Vector2(18, 18)
+	swatch.custom_minimum_size = Vector2(18, 18) * _s()
 	swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	name_cell.add_child(swatch)
-	name_cell.add_child(_cell_label(TimerTypeInfo.name_of(t), 21, TimerTypeInfo.color_of(t)))
+	name_cell.add_child(_cell_label(TimerTypeInfo.name_of(t), 25, TimerTypeInfo.color_of(t)))
 	grid.add_child(name_cell)
 	grid.add_child(_wrap_cell_label(TimerTypeInfo.desc_of(t)))
 
@@ -300,8 +343,8 @@ func _build_powerups_page() -> Control:
 	var wrap := CenterContainer.new()
 	var grid := GridContainer.new()
 	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 24)
-	grid.add_theme_constant_override("v_separation", 14)
+	grid.add_theme_constant_override("h_separation", _fs(24))
+	grid.add_theme_constant_override("v_separation", _fs(14))
 	wrap.add_child(grid)
 	for kind in PowerupSystem.ORDER:
 		_add_powerup_row(grid, kind)
@@ -310,13 +353,13 @@ func _build_powerups_page() -> Control:
 func _add_powerup_row(grid: GridContainer, kind: int) -> void:
 	var accent: Color = PowerupSystem.color_of(kind)
 	var name_cell := VBoxContainer.new()
-	name_cell.add_theme_constant_override("separation", 0)
+	name_cell.add_theme_constant_override("separation", _fs(0))
 	# No keybind hint on mobile - see HelpScreen's identical guard.
 	var hint := PowerupSystem.key_hint(kind)
 	var name_text := "%s  %s" % [PowerupSystem.name_of(kind), hint] if not hint.is_empty() \
 		else PowerupSystem.name_of(kind)
-	name_cell.add_child(_cell_label(name_text, 21, accent))
-	name_cell.add_child(_cell_label(Powerups.cooldown_text(kind), 16, Color(1, 1, 1, 0.5)))
+	name_cell.add_child(_cell_label(name_text, 25, accent))
+	name_cell.add_child(_cell_label(Powerups.cooldown_text(kind), 18, Color(1, 1, 1, 0.5)))
 	grid.add_child(name_cell)
 	grid.add_child(_wrap_cell_label(Powerups.describe(kind)))
 
@@ -329,13 +372,12 @@ func _cell_label(text: String, font_size: int, color: Color) -> Label:
 	return l
 
 func _wrap_cell_label(text: String) -> Label:
-	var l := _cell_label(text, 19, TEXT_FILL)
+	var l := _cell_label(text, 24, TEXT_FILL)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	# Widened from 420 for the same reason as HelpScreen's own wrap cell:
-	# Decay's longer description was wrapping to 3 lines and outgrowing the
-	# reserved page height. There's room - col is 680 wide and the name column
-	# next to this is nowhere near using the rest of it.
-	l.custom_minimum_size = Vector2(460, 0)
+	# Widened from 460 (itself widened from 420) to give the bigger 24pt body
+	# text the same two-line budget the 19pt version had - col is 680 wide and
+	# the name column next to this is nowhere near using the rest of it.
+	l.custom_minimum_size = Vector2(500, 0) * _s()
 	return l
 
 func _heading(text: String, font_size: int, accent: Color) -> Label:
@@ -351,8 +393,8 @@ func _heading(text: String, font_size: int, accent: Color) -> Label:
 func _button(text: String, accent: Color) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(180, 56)
-	button.add_theme_font_size_override("font_size", 26)
+	button.custom_minimum_size = Vector2(180, 56) * _s()
+	button.add_theme_font_size_override("font_size", _fs(26))
 	button.add_theme_color_override("font_color", Color.WHITE)
 	button.add_theme_color_override("font_outline_color", accent)
 	button.add_theme_constant_override("outline_size", 4)
@@ -370,3 +412,4 @@ func _box(accent: Color, darken: float) -> StyleBoxFlat:
 	sb.border_color = accent
 	sb.set_content_margin_all(10)
 	return sb
+

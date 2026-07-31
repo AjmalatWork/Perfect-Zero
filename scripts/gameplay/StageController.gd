@@ -24,6 +24,26 @@ func _ready() -> void:
 	EventBus.timer_expired.connect(_on_timer_expired)
 	# Stages are launched by CampaignNavigator now, not auto-started here, so the
 	# title screen can show first. current_stage_data is left as a vestigial export.
+	Layout.changed.connect(_apply_board_metrics)
+	_apply_board_metrics()
+
+# The board is a VBox of centred rows inside a CenterContainer sized to the
+# canvas, so the centring is already automatic and an orientation flip only has
+# to resize that container.
+#
+# Nothing reflows: the widest stage (Stage 6, 9 timers) is 3*200 + 2*28 = 656
+# units across, which already fits the 900-wide portrait canvas at the current
+# slot size, so TIMERS_PER_ROW stays at 3 in both orientations. Portrait is in
+# fact the roomier of the two vertically - four rows would be 896 tall against
+# landscape's 900-unit ceiling.
+func _apply_board_metrics() -> void:
+	if timer_container == null:
+		return
+	var zone := timer_container.get_parent() as Control
+	if zone == null:
+		return
+	zone.position = Vector2.ZERO
+	zone.size = Layout.canvas_size
 
 func start_stage(stage_data: StageData, reset_base: bool = true) -> void:
 	_active_stage_data = stage_data

@@ -15,7 +15,6 @@ const GOLD := Color("ffd23f")
 const MUTED := Color("8b90a8")
 const BACK_ACCENT := NEON  # same cyan as the title screen's ARCADE button
 const TEXT_FILL := Color("dfe3ee")
-const VIEWPORT_SIZE := Vector2(1600, 900)
 
 # Every gap on this screen is a multiple of one unit rather than an
 # independently-picked value, so the rhythm actually repeats instead of each
@@ -28,6 +27,25 @@ const VIEWPORT_SIZE := Vector2(1600, 900)
 # project already found and fixed once on the Endless End screen.
 const UNIT := 6.0
 
+# Portrait is a 900-wide canvas rather than 1600, and this page's composition is
+# a single narrow centred column - at landscape's type sizes it occupied only
+# 424 of those 900 units and read as a postcard floating in the middle of the
+# screen. Everything (type, spacing, icon, buttons) is scaled by one factor so
+# the rhythm the UNIT system establishes survives intact; the value is set by
+# the widest element, the colophon row, landing at roughly 80% of the canvas.
+const PORTRAIT_SCALE := 1.7
+
+func _s() -> float:
+	return PORTRAIT_SCALE if Layout.is_portrait() else 1.0
+
+# Scaled font size and scaled UNIT multiple - every size on this page goes
+# through one of these two rather than being written as a literal.
+func _fs(base: int) -> int:
+	return roundi(base * _s())
+
+func _u(multiple: float) -> float:
+	return UNIT * multiple * _s()
+
 const FS_NAME := 44       # the one hero credit - the biggest text after the title
 const FS_LEAD := 20       # short lead-in phrases
 const FS_BODY := 21       # the thank-you message
@@ -37,7 +55,13 @@ const FS_ITEM := 20       # the "named thing"/accented highlight in a colophon g
                           # smaller one, so all three colophon highlights match.
 const FS_DETAIL := 17     # the smaller supporting line under a highlight
 
+# Clamped to a fraction of the canvas as well as an absolute: at 900 this is
+# exactly the width of the portrait canvas, which would run the hairline edge to
+# edge and lose the fade-out at both ends that every divider in this project is
+# supposed to have. Landscape is unaffected - 1600 * 0.78 is well past 900, so
+# the absolute still wins there.
 const DIVIDER_WIDTH := 900.0
+const DIVIDER_MAX_CANVAS_FRACTION := 0.78
 const DIVIDER_ALPHA := 0.4
 const COLOPHON_GAP := 110.0
 
@@ -68,61 +92,97 @@ const FEEDBACK_BUTTON := "EMAIL US"
 # than a blank compose window.
 const FEEDBACK_MAILTO := "mailto:mail2makster@gmail.com?subject=Feedback%20for%20Perfect%20Zero&body=Hi%2C%0A%0AI%20wanted%20to%20share%20some%20feedback%20about%20Perfect%20Zero.%0A%0A"
 
+var _backdrop: ColorRect
+var _center: CenterContainer
+var _built_portrait: bool = false
+
 func _ready() -> void:
 	_build()
+	Layout.changed.connect(_apply_canvas)
+	_apply_canvas()
+
+# The composition re-centres itself, so a plain resize is just a re-measure. An
+# orientation change is a rebuild instead: _s() feeds every font size, and a
+# Label's font size is fixed once it has been created.
+func _apply_canvas() -> void:
+	size = Layout.canvas_size
+	if _built_portrait != Layout.is_portrait():
+		_rebuild()
+		return
+	if _center != null:
+		_center.size = Layout.canvas_size
+	_apply_overscan()
+
+func _rebuild() -> void:
+	for child in get_children():
+		remove_child(child)
+		child.queue_free()
+	_backdrop = null
+	_center = null
+	_build()
+	_apply_overscan()
+
+# The backdrop covers the pillarbox bands too, not just the design canvas -
+# sizing it to canvas_size leaves the engine's clear colour showing as lighter
+# strips beyond it on any aspect ratio that isn't the canvas's own.
+func _apply_overscan() -> void:
+	if _backdrop != null:
+		_backdrop.position = Layout.overscan_position
+		_backdrop.size = Layout.overscan_size
 
 func _build() -> void:
 	position = Vector2.ZERO
-	size = VIEWPORT_SIZE
+	size = Layout.canvas_size
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_built_portrait = Layout.is_portrait()
 
-	var backdrop := ColorRect.new()
-	backdrop.position = Vector2.ZERO
-	backdrop.size = VIEWPORT_SIZE
-	backdrop.color = Color(0.03, 0.03, 0.05, 1.0)
-	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(backdrop)
+	_backdrop = ColorRect.new()
+	_backdrop.position = Layout.overscan_position
+	_backdrop.size = Layout.overscan_size
+	_backdrop.color = Color(0.03, 0.03, 0.05, 1.0)
+	_backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_backdrop)
 
-	var center := CenterContainer.new()
-	center.position = Vector2.ZERO
-	center.size = VIEWPORT_SIZE
-	add_child(center)
+	_center = CenterContainer.new()
+	_center.position = Vector2.ZERO
+	_center.size = Layout.canvas_size
+	add_child(_center)
 
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 0)
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
-	center.add_child(col)
+	_center.add_child(col)
 
 	var title := WaveHeading.new()
 	col.add_child(title)
-	title.configure("CREDITS", 56, TEXT_FILL, NEON)
-	col.add_child(_spacer(UNIT * 4.0))
+	title.configure("CREDITS", _fs(56), TEXT_FILL, NEON)
+	col.add_child(_spacer(_u(4.0)))
 
 	# --- Zone 1: the hero credit ------------------------------------------
-	col.add_child(_stack_line(DEV_LEAD, FS_LEAD, MUTED))
-	col.add_child(_spacer(UNIT * 1.0))
-	col.add_child(_stack_line(DEV_NAME, FS_NAME, TEXT_FILL, GOLD, 5))
-	col.add_child(_spacer(UNIT * 4.0))
+	col.add_child(_stack_line(DEV_LEAD, _fs(FS_LEAD), MUTED))
+	col.add_child(_spacer(_u(1.0)))
+	col.add_child(_stack_line(DEV_NAME, _fs(FS_NAME), TEXT_FILL, GOLD, 5))
+	col.add_child(_spacer(_u(4.0)))
 	col.add_child(_make_heart())
-	col.add_child(_spacer(UNIT * 2.0))
-	col.add_child(_stack_line(THANKS_LINES[0], FS_BODY, TEXT_FILL))
-	col.add_child(_spacer(UNIT * 1.0))
-	col.add_child(_stack_line(THANKS_LINES[1], FS_BODY, TEXT_FILL))
-	col.add_child(_spacer(UNIT * 1.0))
+	col.add_child(_spacer(_u(2.0)))
+	col.add_child(_stack_line(THANKS_LINES[0], _fs(FS_BODY), TEXT_FILL))
+	col.add_child(_spacer(_u(1.0)))
+	col.add_child(_stack_line(THANKS_LINES[1], _fs(FS_BODY), TEXT_FILL))
+	col.add_child(_spacer(_u(1.0)))
 	# NEON, not gold - gold stays reserved for "MAKSTER" alone, even here
 	# right next to it, so there's still exactly one hero credit on the page.
-	col.add_child(_stack_line(GMTK_LINE, FS_ITEM, TEXT_FILL, NEON, 3))
-	col.add_child(_spacer(UNIT * 0.5))
-	col.add_child(_stack_line(THEME_LINE, FS_DETAIL, MUTED))
+	col.add_child(_stack_line(GMTK_LINE, _fs(FS_ITEM), TEXT_FILL, NEON, 3))
+	col.add_child(_spacer(_u(0.5)))
+	col.add_child(_stack_line(THEME_LINE, _fs(FS_DETAIL), MUTED))
 
-	col.add_child(_spacer(UNIT * 4.0))
+	col.add_child(_spacer(_u(4.0)))
 	col.add_child(_make_divider())
-	col.add_child(_spacer(UNIT * 4.0))
+	col.add_child(_spacer(_u(4.0)))
 
 	# --- Zone 2: the colophon - two quiet peers side by side (Origin moved up
 	# into Zone 1, see above) -------------------------------------------------
 	var colophon := HBoxContainer.new()
-	colophon.add_theme_constant_override("separation", int(COLOPHON_GAP))
+	colophon.add_theme_constant_override("separation", int(COLOPHON_GAP * _s()))
 	colophon.alignment = BoxContainer.ALIGNMENT_CENTER
 	colophon.add_child(_colophon_group("", MUSIC_LINES, false, MUSIC_KICKER))
 	# "Godot Engine" now gets the same accent treatment as GMTK Game Jam 2026 -
@@ -131,18 +191,18 @@ func _build() -> void:
 	colophon.add_child(_colophon_group(ENGINE_LINES[1], [ENGINE_LINES[0]], true))
 	col.add_child(colophon)
 
-	col.add_child(_spacer(UNIT * 4.0))
+	col.add_child(_spacer(_u(4.0)))
 	col.add_child(_make_divider())
-	col.add_child(_spacer(UNIT * 4.0))
+	col.add_child(_spacer(_u(4.0)))
 
 	# --- Zone 3: feedback + back --------------------------------------------
-	col.add_child(_stack_line(FEEDBACK_LEAD, FS_LEAD, MUTED))
-	col.add_child(_spacer(UNIT * 2.0))
+	col.add_child(_stack_line(FEEDBACK_LEAD, _fs(FS_LEAD), MUTED))
+	col.add_child(_spacer(_u(2.0)))
 	var feedback_button := _button(FEEDBACK_BUTTON, NEON)
 	feedback_button.pressed.connect(func(): OS.shell_open(FEEDBACK_MAILTO))
 	col.add_child(_wrap(feedback_button))
 
-	col.add_child(_spacer(UNIT * 2.0))
+	col.add_child(_spacer(_u(2.0)))
 	var back := _button("BACK", BACK_ACCENT)
 	back.pressed.connect(_on_back)
 	col.add_child(_wrap(back))
@@ -162,26 +222,26 @@ func _build() -> void:
 func _colophon_group(named_line: String, plain_lines: Array, lead_with_plain_first: bool = false,
 		kicker: String = "") -> Control:
 	var group := VBoxContainer.new()
-	group.add_theme_constant_override("separation", int(UNIT * 0.5))
+	group.add_theme_constant_override("separation", int(_u(0.5)))
 	group.alignment = BoxContainer.ALIGNMENT_CENTER
 
 	if not kicker.is_empty():
-		group.add_child(_stack_line(kicker, FS_ITEM, TEXT_FILL, NEON, 3))
-		group.add_child(_spacer(UNIT * 0.5))
+		group.add_child(_stack_line(kicker, _fs(FS_ITEM), TEXT_FILL, NEON, 3))
+		group.add_child(_spacer(_u(0.5)))
 
-	var named: Label = _stack_line(named_line, FS_ITEM, TEXT_FILL, NEON, 3) if not named_line.is_empty() else null
+	var named: Label = _stack_line(named_line, _fs(FS_ITEM), TEXT_FILL, NEON, 3) if not named_line.is_empty() else null
 
 	if lead_with_plain_first and plain_lines.size() > 0:
-		group.add_child(_stack_line(plain_lines[0], FS_DETAIL, MUTED))
+		group.add_child(_stack_line(plain_lines[0], _fs(FS_DETAIL), MUTED))
 		if named != null:
 			group.add_child(named)
 		for i in range(1, plain_lines.size()):
-			group.add_child(_stack_line(plain_lines[i], FS_DETAIL, MUTED))
+			group.add_child(_stack_line(plain_lines[i], _fs(FS_DETAIL), MUTED))
 	else:
 		if named != null:
 			group.add_child(named)
 		for line in plain_lines:
-			group.add_child(_stack_line(line, FS_DETAIL, MUTED))
+			group.add_child(_stack_line(line, _fs(FS_DETAIL), MUTED))
 
 	return group
 
@@ -196,7 +256,7 @@ func _colophon_group(named_line: String, plain_lines: Array, lead_with_plain_fir
 func _make_heart() -> Control:
 	var heart := TextureRect.new()
 	heart.texture = load("res://icons/credits_heart.svg")
-	heart.custom_minimum_size = Vector2(40, 38)
+	heart.custom_minimum_size = Vector2(40, 38) * _s()
 	heart.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	heart.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	heart.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -226,10 +286,13 @@ func _make_divider() -> TextureRect:
 	rect.texture = tex
 	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	rect.stretch_mode = TextureRect.STRETCH_SCALE
-	rect.custom_minimum_size = Vector2(DIVIDER_WIDTH, 2.0)
+	rect.custom_minimum_size = Vector2(_divider_width(), 2.0)
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	rect.modulate = Color(MUTED.r, MUTED.g, MUTED.b, DIVIDER_ALPHA)
 	return rect
+
+func _divider_width() -> float:
+	return minf(DIVIDER_WIDTH, Layout.canvas_size.x * DIVIDER_MAX_CANVAS_FRACTION)
 
 func _wrap(c: Control) -> Control:
 	var w := CenterContainer.new()
@@ -259,8 +322,8 @@ func _stack_line(text: String, font_size: int, color: Color, outline: Color = Co
 func _button(text: String, accent: Color) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(220, 64)
-	button.add_theme_font_size_override("font_size", 26)
+	button.custom_minimum_size = Vector2(220, 64) * _s()
+	button.add_theme_font_size_override("font_size", _fs(26))
 	button.add_theme_color_override("font_color", Color.WHITE)
 	button.add_theme_color_override("font_outline_color", accent)
 	button.add_theme_constant_override("outline_size", 4)

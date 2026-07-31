@@ -10,8 +10,6 @@ extends Node
 # All timing is real-time (Time.get_ticks_msec), not delta-based, so effects
 # stay correct while Engine.time_scale is dipped by hit-stop.
 
-const VIEWPORT_SIZE := Vector2(1600, 900)
-
 # --- Hit-stop (PERFECT only) ---------------------------------------------
 const HITSTOP_SCALE := 0.05      # near-freeze
 const HITSTOP_MS := 60.0         # real-time duration, then a hard snap back
@@ -202,9 +200,42 @@ func _ready() -> void:
 	EventBus.reaction_fired.connect(_on_reaction_fired)
 	ScoreManager.perfect_streak_changed.connect(set_streak)
 	GameManager.state_changed.connect(_on_state_changed)
+	Layout.changed.connect(_on_layout_changed)
+	# Root resize (desktop window drag, Android split-screen/multi-window) can
+	# change the true viewport size independently of an orientation flip - the
+	# screen-space overlays below need to re-fit then too, same as
+	# MainScreenRouter._recenter() already does for its own background.
+	get_tree().root.size_changed.connect(_on_layout_changed)
 	# Powerups is autoloaded *after* this one, so it isn't in the tree yet at
 	# _ready() - deferring is what makes the singleton resolvable.
 	call_deferred("_connect_powerups")
+
+# Every overlay here is full-screen by definition, and all of them are built
+# lazily and then cached, so an orientation flip (or plain resize) has to
+# re-fit whichever ones already exist. Missing this leaves a portrait run with
+# a Shield aura and Overclock frame still clamped to a landscape rect - drawn
+# 1600 wide on a 900-wide canvas, covering only the top half of it.
+#
+# Two different coordinate spaces here, matching how each rect was parented:
+# the first group lives under `_target` (Main itself), so it needs the
+# overscan rect - Main-local coordinates that already account for the
+# pillarbox offset (see Layout.overscan_position's own doc). The second group
+# each has its own top-level CanvasLayer, which renders in true screen space
+# untouched by Main's transform, so it needs the raw viewport size instead -
+# using overscan_position there would double-apply an offset that CanvasLayer
+# was never subject to in the first place.
+func _on_layout_changed() -> void:
+	for rect in [_shield_edge, _vignette, _low_life_vignette]:
+		if rect != null:
+			rect.position = Layout.overscan_position
+			rect.size = Layout.overscan_size
+	var viewport_size := get_viewport().get_visible_rect().size
+	for rect in [_nuke_flash, _stillness_rect, _aberration_rect, _transition_rect]:
+		if rect != null:
+			rect.size = viewport_size
+	_layout_overclock_bands()
+	if _outro_band != null:
+		_outro_band.size = Vector2(viewport_size.x * OUTRO_BAND_WIDTH, viewport_size.y)
 
 func _connect_powerups() -> void:
 	Powerups.shield_armed.connect(_on_shield_armed)
@@ -392,8 +423,8 @@ func _build_shield_edge() -> void:
 	_shield_edge.texture = _shield_tex_solo
 	_shield_edge.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_shield_edge.stretch_mode = TextureRect.STRETCH_SCALE
-	_shield_edge.position = Vector2.ZERO
-	_shield_edge.size = VIEWPORT_SIZE
+	_shield_edge.position = Layout.overscan_position
+	_shield_edge.size = Layout.overscan_size
 	_shield_edge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_shield_edge.modulate.a = 0.0
 	_target.add_child(_shield_edge)
@@ -457,24 +488,51 @@ func _build_overclock_bands() -> void:
 		return
 
 	_overclock_bands = Control.new()
-	_overclock_bands.position = Vector2.ZERO
-	_overclock_bands.size = VIEWPORT_SIZE
+	_overclock_bands.position = Layout.overscan_position
+	_overclock_bands.size = Layout.overscan_size
 	_overclock_bands.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_overclock_bands.visible = false
 	_target.add_child(_overclock_bands)
 
-	var t := OVERCLOCK_BAND_THICKNESS
 	# Four hard-edged bands clamped to the frame. Four separate linear gradients
 	# rather than one radial texture is the whole point - it's the *geometry*
 	# that distinguishes this from the heat vignette, not just the colour.
-	_add_band(Rect2(0, 0, VIEWPORT_SIZE.x, t), Vector2(0.5, 0.0), Vector2(0.5, 1.0))
-	_add_band(Rect2(0, VIEWPORT_SIZE.y - t, VIEWPORT_SIZE.x, t),
-		Vector2(0.5, 1.0), Vector2(0.5, 0.0))
-	_add_band(Rect2(0, 0, t, VIEWPORT_SIZE.y), Vector2(0.0, 0.5), Vector2(1.0, 0.5))
-	_add_band(Rect2(VIEWPORT_SIZE.x - t, 0, t, VIEWPORT_SIZE.y),
-		Vector2(1.0, 0.5), Vector2(0.0, 0.5))
+	#
+	# Direction is baked into each band's gradient at build time, but the rects
+	# are re-applied by _layout_overclock_bands() so an orientation flip can
+	# re-clamp them to the new frame without rebuilding the textures.
+	_add_band(Vector2(0.5, 0.0), Vector2(0.5, 1.0))   # top
+	_add_band(Vector2(0.5, 1.0), Vector2(0.5, 0.0))   # bottom
+	_add_band(Vector2(0.0, 0.5), Vector2(1.0, 0.5))   # left
+	_add_band(Vector2(1.0, 0.5), Vector2(0.0, 0.5))   # right
+	_layout_overclock_bands()
 
-func _add_band(rect: Rect2, from: Vector2, to: Vector2) -> void:
+# Built in the order top, bottom, left, right - see _build_overclock_bands.
+func _layout_overclock_bands() -> void:
+	if _overclock_bands == null:
+		return
+	_overclock_bands.position = Layout.overscan_position
+	_overclock_bands.size = Layout.overscan_size
+	var t := OVERCLOCK_BAND_THICKNESS
+	var w: float = Layout.overscan_size.x
+	var h: float = Layout.overscan_size.y
+	var rects := [
+		Rect2(0, 0, w, t),
+		Rect2(0, h - t, w, t),
+		Rect2(0, 0, t, h),
+		Rect2(w - t, 0, t, h),
+	]
+	var children := _overclock_bands.get_children()
+	for i in mini(rects.size(), children.size()):
+		var band := children[i] as Control
+		if band == null:
+			continue
+		band.position = rects[i].position
+		band.size = rects[i].size
+
+# Geometry is left to _layout_overclock_bands(); this only builds the gradient
+# and its direction.
+func _add_band(from: Vector2, to: Vector2) -> void:
 	var grad := Gradient.new()
 	grad.offsets = PackedFloat32Array([0.0, 1.0])
 	grad.colors = PackedColorArray([
@@ -494,8 +552,6 @@ func _add_band(rect: Rect2, from: Vector2, to: Vector2) -> void:
 	band.texture = tex
 	band.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	band.stretch_mode = TextureRect.STRETCH_SCALE
-	band.position = rect.position
-	band.size = rect.size
 	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_overclock_bands.add_child(band)
 
@@ -509,7 +565,7 @@ func _build_nuke_flash() -> void:
 	_nuke_flash = ColorRect.new()
 	_nuke_flash.color = NUKE_FLASH_COLOR
 	_nuke_flash.position = Vector2.ZERO
-	_nuke_flash.size = VIEWPORT_SIZE
+	_nuke_flash.size = get_viewport().get_visible_rect().size
 	_nuke_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_nuke_flash.visible = false
 	_nuke_flash.modulate.a = 0.0
@@ -683,29 +739,58 @@ func _on_state_changed(new_state: int) -> void:
 	if _shield_edge != null:
 		_shield_edge.visible = in_game
 	if not in_game:
-		# A run left with Shield or Overclock still running would otherwise hand
-		# its overlay to the next one, since nothing closes those windows on an
-		# abandoned run.
-		_shield_aura_target = 0.0
-		_shield_flare_until_ms = 0
-		if _shield_edge != null:
-			_shield_edge.modulate.a = 0.0
-		_overclock_target = 0.0
-		_overclock_level = 0.0
-		if _overclock_bands != null:
-			_overclock_bands.visible = false
-		# A run left on its last life would otherwise hand the danger vignette to
-		# the next screen (and to the next run, which starts at full lives).
-		_low_life_target = 0.0
-		_low_life_level = 0.0
-		if _low_life_vignette != null:
-			_low_life_vignette.visible = false
-		# Leaving play: drop heat and make sure no effect leaves Main displaced.
-		set_streak(0)
-		_reset_transform()
-		# A run abandoned mid-cascade (restart, back to title) would otherwise
-		# leave the next run's board frozen with no one left to release it.
-		_freeze_count = 0
+		reset_run_effects()
+
+# Clears every per-run overlay/animation state Juice tracks - Shield/Overclock
+# auras, the low-life vignette, heat/streak, and Main's shake/punch transform.
+# Called both when _on_state_changed above sees a transition OUT of play, and
+# directly by a fresh run's own start (EndlessRunner.start_run()) - a
+# pause-menu RESTART goes ENDLESS_PLAYING -> ENDLESS_PLAYING, the *same* state
+# start to finish (pausing never changes GameManager.current_state at all), so
+# the "leaving play" branch above never fires for it. Without this second call
+# site, a restart taken while Shield/Overclock was active left that overlay's
+# fade-target armed, and it kept animating right into the new run.
+func reset_run_effects() -> void:
+	# A run left with Shield or Overclock still running would otherwise hand
+	# its overlay to the next one, since nothing closes those windows on an
+	# abandoned run.
+	_shield_aura_target = 0.0
+	_shield_flare_until_ms = 0
+	if _shield_edge != null:
+		_shield_edge.modulate.a = 0.0
+	_overclock_target = 0.0
+	_overclock_level = 0.0
+	if _overclock_bands != null:
+		_overclock_bands.visible = false
+	# A run left on its last life would otherwise hand the danger vignette to
+	# the next screen (and to the next run, which starts at full lives).
+	_low_life_target = 0.0
+	_low_life_level = 0.0
+	if _low_life_vignette != null:
+		_low_life_vignette.visible = false
+	# Leaving play: drop heat and make sure no effect leaves Main displaced.
+	set_streak(0)
+	_reset_transform()
+	# A run abandoned mid-cascade (restart, back to title) would otherwise
+	# leave the next run's board frozen with no one left to release it.
+	_freeze_count = 0
+	# click_burst() spawns a one-shot RadialBurst as a direct child of Main
+	# (_target), which frees itself once its own _process() finishes. A burst
+	# still mid-flight when the game is paused freezes with it (default process
+	# mode), then resumes and finishes playing over the *new* run once
+	# unpaused - the ring the same class of bug as the overlay leftovers above,
+	# just a one-shot node instead of a continuously-driven target. Nothing
+	# else ever frees these except their own animation completing, so a
+	# restart has to sweep them explicitly.
+	if _target != null:
+		for child in _target.get_children():
+			if child is RadialBurst:
+				child.queue_free()
+	# Same leftover-across-a-restart class of bug as the ring above, but for
+	# audio: Godot doesn't pause AudioStreamPlayer playback just because the
+	# tree is paused, so a PERFECT sound still sounding when RESTART is pressed
+	# otherwise keeps playing into the new run.
+	AudioManager.stop_all_sfx()
 
 func _punch_mult_for_streak(streak: int) -> float:
 	if streak >= 8:
@@ -806,7 +891,7 @@ func _process(delta: float) -> void:
 	# rather than about Main's top-left origin.
 	_target.scale = Vector2.ONE * punch_scale
 	_target.position = (_base_position + _shake_offset(now)
-		- VIEWPORT_SIZE * 0.5 * (punch_scale - 1.0))
+		- Layout.canvas_size * 0.5 * (punch_scale - 1.0))
 
 func _shake_offset(now: int) -> Vector2:
 	if _shake_duration <= 0.0:
@@ -880,8 +965,8 @@ func _build_vignette() -> void:
 	_vignette.texture = tex
 	_vignette.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_vignette.stretch_mode = TextureRect.STRETCH_SCALE
-	_vignette.position = Vector2.ZERO
-	_vignette.size = VIEWPORT_SIZE
+	_vignette.position = Layout.overscan_position
+	_vignette.size = Layout.overscan_size
 	_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_vignette.modulate.a = 0.0
 	_vignette.visible = false
@@ -915,8 +1000,8 @@ func _build_low_life_vignette() -> void:
 	_low_life_vignette.texture = tex
 	_low_life_vignette.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_low_life_vignette.stretch_mode = TextureRect.STRETCH_SCALE
-	_low_life_vignette.position = Vector2.ZERO
-	_low_life_vignette.size = VIEWPORT_SIZE
+	_low_life_vignette.position = Layout.overscan_position
+	_low_life_vignette.size = Layout.overscan_size
 	_low_life_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_low_life_vignette.modulate.a = 0.0
 	_low_life_vignette.visible = false
@@ -937,7 +1022,7 @@ func _build_stillness_rect() -> void:
 	_stillness_rect = ColorRect.new()
 	_stillness_rect.color = STILLNESS_COLOR
 	_stillness_rect.position = Vector2.ZERO
-	_stillness_rect.size = VIEWPORT_SIZE
+	_stillness_rect.size = get_viewport().get_visible_rect().size
 	_stillness_rect.visible = false
 	_stillness_rect.modulate.a = 0.0
 	layer.add_child(_stillness_rect)
@@ -1017,7 +1102,8 @@ func _build_outro() -> void:
 	_outro_band.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_outro_band.stretch_mode = TextureRect.STRETCH_SCALE
 	_outro_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_outro_band.size = Vector2(VIEWPORT_SIZE.x * OUTRO_BAND_WIDTH, VIEWPORT_SIZE.y)
+	var viewport_size := get_viewport().get_visible_rect().size
+	_outro_band.size = Vector2(viewport_size.x * OUTRO_BAND_WIDTH, viewport_size.y)
 	_outro_band.visible = false
 	_outro_layer.add_child(_outro_band)
 
@@ -1037,7 +1123,7 @@ func stage_outro(tier: int, tint: Color) -> void:
 	_outro_band.visible = true
 
 	var tween := create_tween()
-	tween.tween_property(_outro_band, "position:x", VIEWPORT_SIZE.x, duration) \
+	tween.tween_property(_outro_band, "position:x", get_viewport().get_visible_rect().size.x, duration) \
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	await tween.finished
 	_outro_band.visible = false
@@ -1057,7 +1143,7 @@ func _build_aberration() -> void:
 	_aberration_rect = ColorRect.new()
 	_aberration_rect.color = ABERRATION_COLOR
 	_aberration_rect.position = Vector2.ZERO
-	_aberration_rect.size = VIEWPORT_SIZE
+	_aberration_rect.size = get_viewport().get_visible_rect().size
 	_aberration_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_aberration_rect.visible = false
 	_aberration_rect.modulate.a = 0.0
@@ -1080,7 +1166,7 @@ func _build_transition_rect() -> void:
 	_transition_rect = ColorRect.new()
 	_transition_rect.color = TRANSITION_COLOR
 	_transition_rect.position = Vector2.ZERO
-	_transition_rect.size = VIEWPORT_SIZE
+	_transition_rect.size = get_viewport().get_visible_rect().size
 	_transition_rect.mouse_filter = Control.MOUSE_FILTER_STOP
 	_transition_rect.visible = false
 	_transition_rect.modulate.a = 0.0

@@ -12,7 +12,6 @@ class_name EndlessEndScreen
 # EndlessRunner has already banked the records by the time this runs; everything
 # here reads what it left behind and animates it.
 
-const VIEWPORT_SIZE := Vector2(1600, 900)
 
 # --- Palette ----------------------------------------------------------------
 # Same five-role split as StageResultScreen, applied to this screen's own
@@ -41,11 +40,26 @@ const FS_BUTTON := 28
 const STAT_CAPTION_WIDTH := 270.0
 const STAT_ROW_SEPARATION := 16.0
 
+# The caption and its value are meant to read as one tight pair. Scaling this
+# column with the type scale put the row at 834 of a 900-unit canvas - caption
+# jammed against the left edge, value against the right, the better part of a
+# screen apart - so in portrait the column is set from the canvas instead. Type
+# size is unaffected; only how far the two halves sit from each other.
+const STAT_COLUMN_CANVAS_FRACTION := 0.36
+
+func _stat_column_width() -> float:
+	if Layout.is_portrait():
+		return Layout.canvas_size.x * STAT_COLUMN_CANVAS_FRACTION
+	return STAT_CAPTION_WIDTH * _s()
+
+func _divider_width() -> float:
+	return _stat_column_width() * 2.0 + STAT_ROW_SEPARATION
+
 # --- Zone rules ---------------------------------------------------------------
-# Matched to the stats table's own width (2 columns + the gap between them)
-# rather than an independent constant, so the rule above it can't drift out of
-# sync with a table that's wider or narrower than it used to be.
-const DIVIDER_WIDTH := STAT_CAPTION_WIDTH * 2.0 + STAT_ROW_SEPARATION
+# The divider width is _divider_width() above: matched to the stats table's own
+# width (2 columns + the gap between them) rather than an independent constant,
+# so the rule can't drift out of sync with a table that's wider or narrower than
+# it used to be.
 const DIVIDER_THICKNESS := 2.0
 const DIVIDER_ALPHA := 0.5
 
@@ -117,12 +131,33 @@ var _score_idle_tween: Tween
 # can never animate over the run that replaced it.
 var _reveal_token: int = 0
 
+
+# Portrait is a 900-wide canvas rather than 1600, so this screen's landscape type
+# sizes leave it reading as a small block adrift in the middle of a phone screen.
+# One factor scales type, spacing and control footprints together, keeping the
+# proportions intact. The stat rows are the exception - see _stat_column_width,
+# which takes its width from the canvas so the caption/value pair stays a tight
+# unit rather than being stretched to the screen edges.
+const PORTRAIT_SCALE := 1.5
+
+func _s() -> float:
+	return PORTRAIT_SCALE if Layout.is_portrait() else 1.0
+
+func _fs(base: int) -> int:
+	return roundi(base * _s())
+
+var _backdrop: ColorRect
+var _center: CenterContainer
+var _built_portrait: bool = false
+
 func _ready() -> void:
 	position = Vector2.ZERO
-	size = VIEWPORT_SIZE
+	size = Layout.canvas_size
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_build()
 	GameManager.state_changed.connect(_on_state_changed)
+	Layout.changed.connect(_apply_canvas)
+	_apply_canvas()
 
 func _on_state_changed(new_state: int) -> void:
 	if new_state == GameManager.GameState.ENDLESS_END:
@@ -210,6 +245,15 @@ func _count_score(target: int, tier: int) -> void:
 	tween.tween_method(_set_score_display, 0.0, float(target), SCORE_COUNT_SEC) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	await tween.finished
+	# A literal zero score has nothing to punctuate - _burst_at already skips
+	# tier 0's ring for this reason, but the digit punch/sting/screen-punch
+	# below it weren't gated the same way and still fired at reduced (not
+	# zero) strength, which is what made a 0-score run still feel like a
+	# celebration. Tier itself isn't the right check (a small nonzero score
+	# against a huge stored best can also land at tier 0), so this checks the
+	# actual target instead.
+	if target <= 0:
+		return
 	_score_digits.punch_all(lerpf(0.8, 1.6, float(tier) / 2.0))
 	_burst_at(_score_digits, tier)
 	AudioManager.play_big_score(lerpf(0.3, 1.0, float(tier) / 2.0))
@@ -423,21 +467,48 @@ func _pop(node: Control, scale_to: float) -> void:
 
 # --- UI construction ------------------------------------------------------
 
+
+# A plain resize is a re-measure; an orientation change rebuilds, because the
+# portrait scale feeds every font size and a Label's is fixed once created.
+func _apply_canvas() -> void:
+	size = Layout.canvas_size
+	if _built_portrait != Layout.is_portrait():
+		_rebuild()
+		return
+	if _center != null:
+		_center.size = Layout.canvas_size
+	_apply_overscan()
+
+func _rebuild() -> void:
+	for child in get_children():
+		remove_child(child)
+		child.queue_free()
+	_backdrop = null
+	_center = null
+	_build()
+	_apply_overscan()
+
+func _apply_overscan() -> void:
+	ScreenLayout.cover_all([_backdrop, _wash])
+
 func _build() -> void:
-	var backdrop := ColorRect.new()
-	backdrop.position = Vector2.ZERO
-	backdrop.size = VIEWPORT_SIZE
+	_built_portrait = Layout.is_portrait()
+	_backdrop = ColorRect.new()
+	var backdrop := _backdrop
+	backdrop.position = Layout.overscan_position
+	backdrop.size = Layout.overscan_size
 	backdrop.color = Color(0.03, 0.03, 0.05, 1.0)
 	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(backdrop)
 
-	var center := CenterContainer.new()
+	_center = CenterContainer.new()
+	var center := _center
 	center.position = Vector2.ZERO
-	center.size = VIEWPORT_SIZE
+	center.size = Layout.canvas_size
 	add_child(center)
 
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 18)
+	col.add_theme_constant_override("separation", _fs(18))
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 	center.add_child(col)
 
@@ -450,7 +521,7 @@ func _build() -> void:
 	# Reserved lane so a late-arriving record can't reflow the column under it -
 	# same trick StageResultScreen's badge lane uses.
 	_badge_lane = Control.new()
-	_badge_lane.custom_minimum_size = Vector2(0, 40)
+	_badge_lane.custom_minimum_size = Vector2(0, 40) * _s()
 	_badge_lane.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.add_child(_badge_lane)
 
@@ -480,7 +551,7 @@ func _build() -> void:
 	stats_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.add_child(stats_wrap)
 	var stats_col := VBoxContainer.new()
-	stats_col.add_theme_constant_override("separation", 6)
+	stats_col.add_theme_constant_override("separation", _fs(6))
 	stats_wrap.add_child(stats_col)
 
 	# Read a size smaller than the two below it - it's the mark this run is
@@ -498,7 +569,7 @@ func _build() -> void:
 		label.add_theme_constant_override("outline_size", 3)
 	# Legitimately blank on a first-ever run - see _show_summary - so the row's
 	# height is reserved explicitly rather than left to its (empty) text.
-	_record_row.custom_minimum_size = Vector2(0, 30)
+	_record_row.custom_minimum_size = Vector2(0, 30) * _s()
 	stats_col.add_child(_record_row)
 
 	var streak_parts := _build_stat_row("BEST STREAK")
@@ -516,11 +587,11 @@ func _build() -> void:
 	col.add_child(_divider_bottom)
 
 	_button_row = HBoxContainer.new()
-	_button_row.add_theme_constant_override("separation", 24)
+	_button_row.add_theme_constant_override("separation", _fs(24))
 	_button_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	# Reserve the row's height up front - the buttons don't exist until the
 	# reveal finishes, and the column must not jump when they arrive.
-	_button_row.custom_minimum_size = Vector2(0, 84)
+	_button_row.custom_minimum_size = Vector2(0, 84) * _s()
 	col.add_child(_button_row)
 
 	# On top of everything else (self, not `col`) so the record flourish's wash
@@ -528,7 +599,7 @@ func _build() -> void:
 	# wash over - same ordering StageResultScreen's own _wash uses.
 	_wash = ColorRect.new()
 	_wash.position = Vector2.ZERO
-	_wash.size = VIEWPORT_SIZE
+	_wash.size = Layout.canvas_size
 	_wash.color = Color(1, 1, 1, 0)
 	_wash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_wash)
@@ -599,12 +670,12 @@ func _build_stat_row(caption_text: String, font_size: int = FS_STAT) -> Array:
 
 	var caption := _label(caption_text, font_size, MUTED)
 	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	caption.custom_minimum_size = Vector2(STAT_CAPTION_WIDTH, 0)
+	caption.custom_minimum_size = Vector2(_stat_column_width(), 0)
 	row.add_child(caption)
 
 	var value := _label("0", font_size, MUTED)
 	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	value.custom_minimum_size = Vector2(STAT_CAPTION_WIDTH, 0)
+	value.custom_minimum_size = Vector2(_stat_column_width(), 0)
 	row.add_child(value)
 
 	return [row, caption, value]
@@ -628,7 +699,7 @@ func _button(text: String, accent: Color, flat: bool = false) -> Button:
 	PressFeedback.apply(button)
 
 	if flat:
-		button.custom_minimum_size = Vector2(200, 54)
+		button.custom_minimum_size = Vector2(200, 54) * _s()
 		button.add_theme_font_size_override("font_size", FS_RECORD)
 		button.add_theme_color_override("font_color", accent)
 		button.add_theme_color_override("font_hover_color", TEXT_FILL)
@@ -638,7 +709,7 @@ func _button(text: String, accent: Color, flat: bool = false) -> Button:
 		button.add_theme_stylebox_override("hover", _box(accent, 0.88, 0))
 		button.add_theme_stylebox_override("pressed", _box(accent, 0.8, 0))
 	else:
-		button.custom_minimum_size = Vector2(240, 76)
+		button.custom_minimum_size = Vector2(240, 76) * _s()
 		button.add_theme_font_size_override("font_size", FS_BUTTON)
 		button.add_theme_color_override("font_color", Color.WHITE)
 		button.add_theme_color_override("font_outline_color", accent)
@@ -682,7 +753,7 @@ func _make_divider() -> TextureRect:
 	rect.texture = tex
 	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	rect.stretch_mode = TextureRect.STRETCH_SCALE
-	rect.custom_minimum_size = Vector2(DIVIDER_WIDTH, DIVIDER_THICKNESS)
+	rect.custom_minimum_size = Vector2(_divider_width(), DIVIDER_THICKNESS * _s())
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	rect.modulate = Color(MUTED.r, MUTED.g, MUTED.b, DIVIDER_ALPHA)
 	return rect
@@ -699,3 +770,4 @@ func _tint_dividers(color: Color, duration: float = 0.5) -> void:
 			continue
 		var tween := create_tween()
 		tween.tween_property(divider, "modulate", target, duration)
+

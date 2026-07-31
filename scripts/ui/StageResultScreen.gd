@@ -124,7 +124,6 @@ const COMPLETE_TEXT := "PERFECT ZERO, ACHIEVED.\nReady to see how long you can l
 # Matches the project's viewport. Controls nested under a Node2D (Main) don't
 # reliably inherit viewport-relative anchors, so full-screen rects are sized
 # explicitly rather than anchor-based.
-const VIEWPORT_SIZE := Vector2(1600, 900)
 
 @export var stage_controller: StageController
 @export var campaign_navigator: CampaignNavigator
@@ -175,11 +174,84 @@ var _reveal_intensity: float = 0.0
 
 var _revealing: bool = false
 
+
+# Portrait is a 900-wide canvas rather than 1600. The reveal's type scale (a
+# 92-unit hero score down to 24-unit support text) is tuned for the wider canvas
+# and reads small on a phone, so one factor lifts type, spacing and the reserved
+# lane heights together. 1.35 puts the 620-wide dividers at 837 of 900, which is
+# what caps it.
+const PORTRAIT_SCALE := 1.35
+
+func _s() -> float:
+	return PORTRAIT_SCALE if Layout.is_portrait() else 1.0
+
+func _fs(base: int) -> int:
+	return roundi(base * _s())
+
+var _backdrop: ColorRect
+var _center: CenterContainer
+var _built_portrait: bool = false
+var _canvas_dirty: bool = false
+
 func _ready() -> void:
 	_build_ui()
 	_build_flames()
 	_build_sign_ring()
 	GameManager.state_changed.connect(_on_state_changed)
+	Layout.changed.connect(_apply_canvas)
+	SafeArea.changed.connect(_apply_safe_area)
+	_apply_canvas()
+	_apply_safe_area()
+
+# Unlike the corner-pinned elements SafeArea usually adjusts (pause button,
+# HelpBubble icon, EndlessHUD's bottom row), this screen's whole reveal column
+# is one centred block - so instead of nudging a single element, the fix is to
+# re-centre the block itself within the inset-adjusted safe rect rather than
+# the raw canvas. Confirmed necessary on a real device: in landscape, this
+# canvas fills the device height with zero letterbox margin (unlike a desktop
+# test window, which almost always has a sliver of slack that happens to
+# absorb this), so BACK TO TITLE at the bottom of the column landed inside the
+# gesture-nav strip with nothing protecting it.
+func _apply_safe_area() -> void:
+	if _center == null:
+		return
+	_center.position = Vector2(0, (SafeArea.top - SafeArea.bottom) * 0.5)
+
+# Unlike the other screens, this one can be part-way through a scripted reveal
+# when the orientation flips - tearing the tree down mid-tally would drop the
+# animation and the score with it. A flip during a reveal is therefore deferred
+# to the end of it (see _run_reveal), and only the re-measure happens now.
+func _apply_canvas() -> void:
+	size = Layout.canvas_size
+	if _built_portrait != Layout.is_portrait():
+		if _revealing:
+			_canvas_dirty = true
+		else:
+			_rebuild()
+			return
+	if _center != null:
+		_center.size = Layout.canvas_size
+	_apply_overscan()
+
+func _rebuild() -> void:
+	_canvas_dirty = false
+	_stop_final_idle()
+	for child in get_children():
+		remove_child(child)
+		child.queue_free()
+	_backdrop = null
+	_center = null
+	_build_ui()
+	_build_flames()
+	_build_sign_ring()
+	_apply_overscan()
+	_apply_safe_area()
+
+# Every one of these is a full-screen wash or dim, so all of them have to reach
+# past the canvas into the pillarbox bands - a flash that stops at the canvas
+# edge reads as a lit rectangle rather than the whole screen flashing.
+func _apply_overscan() -> void:
+	ScreenLayout.cover_all([_backdrop, _anticipation, _dim, _wash, _flash])
 
 func _on_state_changed(new_state: int) -> void:
 	if _revealing:
@@ -271,6 +343,8 @@ func _run_reveal(cleared: bool) -> void:
 
 	_finish_clear(stage_score)
 	_revealing = false
+	if _canvas_dirty:
+		_rebuild()
 
 # --- Skip / fast-forward --------------------------------------------------
 
@@ -567,7 +641,7 @@ func _play_new_best_flourish() -> void:
 	for node in [_badge, _badge_glow]:
 		node.visible = true
 		node.modulate.a = 0.0
-	_badge.pivot_offset = BADGE_SIZE * 0.5
+	_badge.pivot_offset = BADGE_SIZE * _s() * 0.5
 	_badge.scale = Vector2(0.6, 0.6)
 	_badge.rotation = deg_to_rad(-7.0)
 
@@ -628,8 +702,8 @@ func _play_unlock_banner(text: String) -> void:
 	center.add_child(panel)
 
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 22)
-	col.custom_minimum_size = Vector2(560, 0)
+	col.add_theme_constant_override("separation", _fs(22))
+	col.custom_minimum_size = Vector2(560, 0) * _s()
 	panel.add_child(col)
 
 	var label := _make_label(38, GOLD.darkened(0.15))
@@ -640,8 +714,8 @@ func _play_unlock_banner(text: String) -> void:
 
 	var nice := Button.new()
 	nice.text = "OKAY!"
-	nice.custom_minimum_size = Vector2(200, 64)
-	nice.add_theme_font_size_override("font_size", 28)
+	nice.custom_minimum_size = Vector2(200, 64) * _s()
+	nice.add_theme_font_size_override("font_size", _fs(28))
 	nice.add_theme_color_override("font_color", Color.WHITE)
 	nice.add_theme_color_override("font_outline_color", GOLD)
 	nice.add_theme_constant_override("outline_size", 4)
@@ -667,11 +741,11 @@ func _play_unlock_banner(text: String) -> void:
 # and reads as a single lit object.
 func _position_badge() -> void:
 	var lane: Vector2 = _badge_lane.global_position - global_position
-	_badge.position = Vector2(lane.x + _badge_lane.size.x * 0.5 - BADGE_SIZE.x * 0.5, lane.y)
+	_badge.position = Vector2(lane.x + _badge_lane.size.x * 0.5 - BADGE_SIZE.x * _s() * 0.5, lane.y)
 
 	var score: Vector2 = _final_label.global_position - global_position
 	var score_center := score + _final_label.size * 0.5
-	_badge_glow.position = score_center - BADGE_GLOW_SIZE * 0.5
+	_badge_glow.position = score_center - BADGE_GLOW_SIZE * _s() * 0.5
 
 # Keeps the screen from going completely static while the player reads the
 # result. Applied to the final score rather than to a grade sign: the per-stop
@@ -701,23 +775,31 @@ func _stop_final_idle() -> void:
 func _show_fail_summary() -> void:
 	var best: int = SaveManager.load_high_score("highscore_stage_%d" % campaign_navigator.current_index)
 	# A failed attempt scored 0 and there is no hero number to sit under, so the
-	# only line worth printing is the mark still standing.
-	_show_summary(best, best, false)
+	# only line worth printing is the mark still standing - or, if there isn't
+	# one yet, a line saying so rather than leaving the lane blank.
+	_show_summary(best, best, false, false)
 	_build_buttons(false)
 
 # One supporting line, not two. The hero number directly above already IS this
 # attempt's score, so a "This attempt" line only restates it, and on a record a
 # "Best" line restates the same figure a third time. What is actually new
 # depends on the outcome: after a record, the mark that was beaten; otherwise,
-# the mark still to beat. A first-ever clear has neither, and gets nothing - the
-# badge is already saying the only thing there is to say.
-func _show_summary(best: int, previous_best: int, is_new_best: bool) -> void:
+# the mark still to beat. A first-ever CLEAR has neither, and gets nothing - the
+# NEW BEST badge is already saying the only thing there is to say.
+#
+# A first-ever FAIL has neither a record nor a badge, though - there is nothing
+# else on screen to fill this reserved lane, and it read as a plain empty gap
+# above the buttons rather than an intentional layout. `cleared` is what tells
+# the two "nothing to report" cases apart.
+func _show_summary(best: int, previous_best: int, is_new_best: bool, cleared: bool = true) -> void:
 	var text := ""
 	if is_new_best:
 		if previous_best > 0:
 			text = "PREVIOUS BEST   %d" % previous_best
 	elif best > 0:
 		text = "BEST   %d" % best
+	elif not cleared:
+		text = "STAGE NOT YET CLEARED"
 
 	_record_label.text = text
 	if text.is_empty():
@@ -788,7 +870,13 @@ func _reset_display(cleared: bool) -> void:
 		if divider != null:
 			divider.visible = true
 
-	_headline.add_theme_font_size_override("font_size", FS_HEADLINE)  # reset (completion shrinks it)
+	_headline.add_theme_font_size_override("font_size", _fs(FS_HEADLINE))  # reset (completion shrinks it)
+	# Reset alongside the font size for the same reason: the completion screen's
+	# long two-sentence message is the only text this label ever needs to wrap,
+	# and without a width to wrap against it was overflowing past both edges of
+	# the canvas rather than breaking to a second line.
+	_headline.custom_minimum_size = Vector2(0, 0)
+	_headline.autowrap_mode = TextServer.AUTOWRAP_OFF
 
 	if cleared:
 		_headline.text = "STAGE CLEAR!"
@@ -821,7 +909,7 @@ func _spawn_sign(grade: String, at: Vector2) -> void:
 	# Floating grade sign that pops with oomph, centered on `at` (its own lane).
 	var sign_label := Label.new()
 	sign_label.text = grade
-	sign_label.add_theme_font_size_override("font_size", FS_SIGN)
+	sign_label.add_theme_font_size_override("font_size", _fs(FS_SIGN))
 	sign_label.add_theme_color_override("font_color", ScoreManager.grade_color(grade))
 	sign_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
 	sign_label.add_theme_constant_override("outline_size", 8)
@@ -829,7 +917,7 @@ func _spawn_sign(grade: String, at: Vector2) -> void:
 	sign_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	sign_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sign_label.z_index = 20
-	sign_label.size = Vector2(320, 60)
+	sign_label.size = Vector2(320, 60) * _s()
 	sign_label.position = at - sign_label.size * 0.5
 	sign_label.pivot_offset = sign_label.size * 0.5
 	sign_label.scale = Vector2(1.7, 1.7)
@@ -907,6 +995,21 @@ func _show_streak_popup(count: int) -> void:
 		_streak_tween.kill()
 
 	_streak_label.text = "%dx PERFECT!" % count
+	# Vertically centred in _badge_lane's own reserved lane - below the score
+	# line, above the final score, and empty at this point in the reveal (the
+	# NEW BEST badge that normally lives here doesn't appear until _finish_clear,
+	# well after the finale, by which point every streak popup has long since
+	# faded - see the fade timing below).
+	#
+	# _sign_anchor was tried first and rejected: it's the SAME lane the per-stop
+	# grade sign pops into via _sign_center(), and a PERFECT triggers both at
+	# once, so "3x PERFECT!" and the floating "PERFECT" sign landed fused
+	# together in the same spot every single time. An earlier version before
+	# that parked this above the headline's top edge, which pushed it off the
+	# top of the canvas entirely on a centred column with little room above it.
+	var lane_y: float = (_badge_lane.global_position - global_position).y
+	_streak_label.position = Vector2(0,
+		lane_y + (_badge_lane.size.y - _streak_label.size.y) * 0.5)
 	_streak_label.pivot_offset = _streak_label.size * 0.5
 	_streak_label.modulate.a = 1.0
 	_streak_label.scale = Vector2(1.5, 1.5)
@@ -1085,9 +1188,14 @@ func _show_campaign_complete() -> void:
 		_badge_glow.visible = false
 
 	_headline.text = COMPLETE_TEXT
-	_headline.add_theme_font_size_override("font_size", FS_COMPLETE)  # long text: smaller so it fits
+	_headline.add_theme_font_size_override("font_size", _fs(FS_COMPLETE))  # long text: smaller so it fits
 	_headline.add_theme_color_override("font_color", GOLD)
 	_headline.add_theme_color_override("font_outline_color", GOLD.darkened(0.4))
+	# The only text on this screen long enough to need wrapping - bounded to a
+	# margin of the canvas rather than a fixed pixel width, since that canvas is
+	# 1600 wide in landscape and 900 in portrait.
+	_headline.custom_minimum_size = Vector2(Layout.canvas_size.x * 0.86, 0)
+	_headline.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
 	# Full emphasis here rather than the tertiary treatment it gets on a normal
 	# result: there is nothing else to press and nowhere else to go.
@@ -1109,12 +1217,13 @@ func _on_finish() -> void:
 
 func _build_ui() -> void:
 	position = Vector2.ZERO
-	size = VIEWPORT_SIZE
+	size = Layout.canvas_size
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	var backdrop := ColorRect.new()
-	backdrop.position = Vector2.ZERO
-	backdrop.size = VIEWPORT_SIZE
+	_backdrop = ColorRect.new()
+	var backdrop := _backdrop
+	backdrop.position = Layout.overscan_position
+	backdrop.size = Layout.overscan_size
 	backdrop.color = Color(0.02, 0.02, 0.04, 0.72)
 	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(backdrop)
@@ -1127,7 +1236,7 @@ func _build_ui() -> void:
 	_anticipation.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_anticipation.stretch_mode = TextureRect.STRETCH_SCALE
 	_anticipation.position = Vector2.ZERO
-	_anticipation.size = VIEWPORT_SIZE
+	_anticipation.size = Layout.canvas_size
 	_anticipation.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_anticipation.modulate.a = 0.0
 	_anticipation.visible = false
@@ -1135,12 +1244,13 @@ func _build_ui() -> void:
 
 	var center := CenterContainer.new()
 	center.position = Vector2.ZERO
-	center.size = VIEWPORT_SIZE
+	center.size = Layout.canvas_size
+	_center = center
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(center)
 
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 20)
+	col.add_theme_constant_override("separation", _fs(20))
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 	center.add_child(col)
 
@@ -1151,7 +1261,7 @@ func _build_ui() -> void:
 	# A reserved lane so the grade signs pop between the headline and the score
 	# line instead of overlapping "STAGE CLEAR!".
 	_sign_anchor = Control.new()
-	_sign_anchor.custom_minimum_size = Vector2(0, 88)
+	_sign_anchor.custom_minimum_size = Vector2(0, 88) * _s()
 	_sign_anchor.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.add_child(_sign_anchor)
 
@@ -1164,7 +1274,7 @@ func _build_ui() -> void:
 	# the number it resolves into.
 	_score_line = HBoxContainer.new()
 	_score_line.alignment = BoxContainer.ALIGNMENT_CENTER
-	_score_line.add_theme_constant_override("separation", 16)
+	_score_line.add_theme_constant_override("separation", _fs(16))
 	col.add_child(_score_line)
 
 	_score_digits = DigitCounter.new()
@@ -1177,7 +1287,7 @@ func _build_ui() -> void:
 	_score_line.add_child(_mult_label)
 
 	_badge_lane = Control.new()
-	_badge_lane.custom_minimum_size = Vector2(0, BADGE_LANE_HEIGHT)
+	_badge_lane.custom_minimum_size = Vector2(0, BADGE_LANE_HEIGHT) * _s()
 	_badge_lane.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.add_child(_badge_lane)
 
@@ -1190,10 +1300,16 @@ func _build_ui() -> void:
 	_record_label = _make_label(FS_SUPPORT, Color(0, 0, 0, 0.6), 3)
 	_record_label.add_theme_color_override("font_color", MUTED)
 	_record_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# Labels default to top-aligned text. The reserved lane below is taller than
+	# the text itself (so the column's height stays fixed whether this line ends
+	# up empty, "BEST n", or the fail-path message), which without this left the
+	# text sitting at the top of its own lane rather than centred between the
+	# two dividers bracketing it.
+	_record_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	# Height pinned so the column's vertical layout is fixed from construction:
 	# this line can legitimately end up empty, and _position_badge reads the
 	# score's position on the frame the record lands.
-	_record_label.custom_minimum_size = Vector2(0, 34)
+	_record_label.custom_minimum_size = Vector2(0, 34) * _s()
 	col.add_child(_record_label)
 
 	# Closes the score zone and opens the actions.
@@ -1201,15 +1317,19 @@ func _build_ui() -> void:
 	col.add_child(_divider_bottom)
 
 	_button_row = HBoxContainer.new()
-	_button_row.add_theme_constant_override("separation", 24)
+	_button_row.add_theme_constant_override("separation", _fs(24))
 	_button_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	# Reserve the row's final height up front (buttons don't exist until the end).
-	_button_row.custom_minimum_size = Vector2(0, 84)
+	_button_row.custom_minimum_size = Vector2(0, 84) * _s()
 	col.add_child(_button_row)
 
 	# Second row, below the RETRY/NEXT STAGE row, for the title button.
 	_title_row = HBoxContainer.new()
 	_title_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	# Reserve the row's final height up front, same reasoning as _button_row above:
+	# it stays empty until _build_buttons runs, and an unreserved 0->54 jump when
+	# BACK TO TITLE finally appears shifts everything above it in the centred column.
+	_title_row.custom_minimum_size = Vector2(0, 54) * _s()
 	col.add_child(_title_row)
 
 	# Free-floating, like the streak popup below: parking it in the centred
@@ -1223,7 +1343,7 @@ func _build_ui() -> void:
 	_badge_glow.texture = _radial_bloom_texture()
 	_badge_glow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_badge_glow.stretch_mode = TextureRect.STRETCH_SCALE
-	_badge_glow.size = BADGE_GLOW_SIZE
+	_badge_glow.size = BADGE_GLOW_SIZE * _s()
 	_badge_glow.modulate = Color(GOLD.r, GOLD.g, GOLD.b, 0.0)
 	_badge_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_badge_glow.visible = false
@@ -1234,7 +1354,7 @@ func _build_ui() -> void:
 	# which already reads throughout this game as "celebratory, not clickable".
 	_badge = _make_label(FS_BADGE, GOLD.darkened(0.2))
 	_badge.text = "NEW BEST!"
-	_badge.size = BADGE_SIZE
+	_badge.size = BADGE_SIZE * _s()
 	_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1246,8 +1366,10 @@ func _build_ui() -> void:
 	_streak_label = _make_label(FS_STREAK, GOLD)
 	_streak_label.text = ""
 	_streak_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_streak_label.position = Vector2(0, 70)
-	_streak_label.size = Vector2(VIEWPORT_SIZE.x, 50)
+	# Initial placement only - _show_streak_popup() re-parks it against the
+	# headline's real rect before it is ever visible.
+	_streak_label.position = Vector2(0, 70 * _s())
+	_streak_label.size = Vector2(Layout.canvas_size.x, 50 * _s())
 	_streak_label.modulate.a = 0.0
 	_streak_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_streak_label)
@@ -1256,7 +1378,7 @@ func _build_ui() -> void:
 	# screen - the breath beat dims the result content, not the punctuation.
 	_dim = ColorRect.new()
 	_dim.position = Vector2.ZERO
-	_dim.size = VIEWPORT_SIZE
+	_dim.size = Layout.canvas_size
 	_dim.color = Color(0.01, 0.01, 0.02, 0.0)
 	_dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_dim)
@@ -1265,14 +1387,14 @@ func _build_ui() -> void:
 	# so it sits over the dim but must not swallow the flash's punctuation.
 	_wash = ColorRect.new()
 	_wash.position = Vector2.ZERO
-	_wash.size = VIEWPORT_SIZE
+	_wash.size = Layout.canvas_size
 	_wash.color = Color(1, 1, 1, 0)
 	_wash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_wash)
 
 	_flash = ColorRect.new()
 	_flash.position = Vector2.ZERO
-	_flash.size = VIEWPORT_SIZE
+	_flash.size = Layout.canvas_size
 	_flash.color = Color(1, 1, 1, 0)
 	_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_flash)
@@ -1398,7 +1520,7 @@ func _make_divider() -> TextureRect:
 	rect.stretch_mode = TextureRect.STRETCH_SCALE
 	# Also sets the centred column's minimum width, which is what keeps the rules
 	# wider than the text they bracket instead of hugging it.
-	rect.custom_minimum_size = Vector2(DIVIDER_WIDTH, DIVIDER_THICKNESS)
+	rect.custom_minimum_size = Vector2(DIVIDER_WIDTH, DIVIDER_THICKNESS) * _s()
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	rect.modulate = Color(MUTED.r, MUTED.g, MUTED.b, DIVIDER_ALPHA)
 	return rect
@@ -1552,16 +1674,16 @@ func _add_button(container: HBoxContainer, text: String, accent: Color, handler:
 
 	match emphasis:
 		Emphasis.SECONDARY:
-			button.custom_minimum_size = Vector2(240, 84)
-			button.add_theme_font_size_override("font_size", FS_BUTTON)
+			button.custom_minimum_size = Vector2(240, 84) * _s()
+			button.add_theme_font_size_override("font_size", _fs(FS_BUTTON))
 			button.add_theme_color_override("font_color", accent.lerp(TEXT_FILL, 0.5))
 			button.add_theme_constant_override("outline_size", 0)
 			button.add_theme_stylebox_override("normal", _make_box(accent, 0.93, 0.0, 0, 2, 0.55))
 			button.add_theme_stylebox_override("hover", _make_box(accent, 0.82, 0.3, 8, 2, 0.9))
 			button.add_theme_stylebox_override("pressed", _make_box(accent, 0.72, 0.25, 4, 2, 0.9))
 		Emphasis.TERTIARY:
-			button.custom_minimum_size = Vector2(200, 54)
-			button.add_theme_font_size_override("font_size", FS_SUPPORT)
+			button.custom_minimum_size = Vector2(200, 54) * _s()
+			button.add_theme_font_size_override("font_size", _fs(FS_SUPPORT))
 			button.add_theme_color_override("font_color", accent)
 			button.add_theme_color_override("font_hover_color", TEXT_FILL)
 			button.add_theme_color_override("font_pressed_color", TEXT_FILL)
@@ -1570,8 +1692,8 @@ func _add_button(container: HBoxContainer, text: String, accent: Color, handler:
 			button.add_theme_stylebox_override("hover", _make_box(accent, 0.88, 0.0, 0, 0, 0.0))
 			button.add_theme_stylebox_override("pressed", _make_box(accent, 0.8, 0.0, 0, 0, 0.0))
 		_:
-			button.custom_minimum_size = Vector2(240, 84)
-			button.add_theme_font_size_override("font_size", FS_BUTTON)
+			button.custom_minimum_size = Vector2(240, 84) * _s()
+			button.add_theme_font_size_override("font_size", _fs(FS_BUTTON))
 			button.add_theme_color_override("font_color", Color.WHITE)
 			button.add_theme_color_override("font_outline_color", accent)
 			button.add_theme_constant_override("outline_size", 5)

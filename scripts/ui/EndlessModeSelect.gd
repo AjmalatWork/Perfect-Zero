@@ -1,7 +1,6 @@
 extends Control
 class_name EndlessModeSelect
 
-const VIEWPORT_SIZE := Vector2(1600, 900)
 const NEON := Color("22d3ff")
 const RED := Color("ff2e5e")
 const GOLD := Color("ffd23f")
@@ -18,12 +17,36 @@ var _hardcore_button: Button
 # TutorialManager tracks its own popup layer.
 var _tutorial_layer: CanvasLayer
 
+
+# Portrait is a 900-wide canvas rather than 1600, so this screen's landscape type
+# sizes leave it reading as a small block adrift in the middle of a phone screen.
+# One factor scales type, spacing and control footprints together, keeping the
+# proportions intact. Chosen from the measured content: content measures 420 wide; 1.7 puts it at 714 of 900.
+const PORTRAIT_SCALE := 1.7
+
+# Matches every other screen's page-title size (CreditsScreen/OptionsPanel),
+# confirmed with the user 2026-07-31 - this used to be its own smaller size and
+# read inconsistent against screens reached from the same title-screen row.
+const PAGE_HEADING_SIZE := 56
+
+func _s() -> float:
+	return PORTRAIT_SCALE if Layout.is_portrait() else 1.0
+
+func _fs(base: int) -> int:
+	return roundi(base * _s())
+
+var _backdrop: ColorRect
+var _center: CenterContainer
+var _built_portrait: bool = false
+
 func _ready() -> void:
 	position = Vector2.ZERO
-	size = VIEWPORT_SIZE
+	size = Layout.canvas_size
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_build()
 	GameManager.state_changed.connect(_on_state_changed)
+	Layout.changed.connect(_apply_canvas)
+	_apply_canvas()
 
 func _on_state_changed(new_state: int) -> void:
 	if new_state != GameManager.GameState.ENDLESS_MODE_SELECT:
@@ -32,27 +55,54 @@ func _on_state_changed(new_state: int) -> void:
 	# progress made elsewhere can unlock this between visits to this screen.
 	_style_hardcore_lock()
 
+
+# A plain resize is a re-measure; an orientation change rebuilds, because the
+# portrait scale feeds every font size and a Label's is fixed once created.
+func _apply_canvas() -> void:
+	size = Layout.canvas_size
+	if _built_portrait != Layout.is_portrait():
+		_rebuild()
+		return
+	if _center != null:
+		_center.size = Layout.canvas_size
+	_apply_overscan()
+
+func _rebuild() -> void:
+	for child in get_children():
+		remove_child(child)
+		child.queue_free()
+	_backdrop = null
+	_center = null
+	_build()
+	_apply_overscan()
+
+func _apply_overscan() -> void:
+	ScreenLayout.cover(_backdrop)
+
 func _build() -> void:
-	var backdrop := ColorRect.new()
-	backdrop.position = Vector2.ZERO
-	backdrop.size = VIEWPORT_SIZE
+	_built_portrait = Layout.is_portrait()
+	_backdrop = ColorRect.new()
+	var backdrop := _backdrop
+	backdrop.position = Layout.overscan_position
+	backdrop.size = Layout.overscan_size
 	backdrop.color = Color(0.03, 0.03, 0.05, 1.0)
 	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(backdrop)
 
-	var center := CenterContainer.new()
+	_center = CenterContainer.new()
+	var center := _center
 	center.position = Vector2.ZERO
-	center.size = VIEWPORT_SIZE
+	center.size = Layout.canvas_size
 	add_child(center)
 
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 24)
+	col.add_theme_constant_override("separation", _fs(24))
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 	center.add_child(col)
 
 	var title := WaveHeading.new()
 	col.add_child(title)
-	title.configure("ENDLESS", 72, TEXT_FILL, NEON)
+	title.configure("ENDLESS", _fs(PAGE_HEADING_SIZE), TEXT_FILL, NEON)
 
 	col.add_child(_heading("Choose your mode", 26, GOLD))
 
@@ -68,7 +118,7 @@ func _build() -> void:
 	# buttons' own 420x76 - _button() is shared with those, so the size is
 	# overridden after creation here.
 	var back := _button("BACK", NEON)
-	back.custom_minimum_size = Vector2(200, 64)
+	back.custom_minimum_size = Vector2(200, 64) * _s()
 	back.pressed.connect(_on_back)
 	col.add_child(_wrap(back))
 
@@ -171,8 +221,8 @@ func _heading(text: String, font_size: int, accent: Color, outline: int = 5) -> 
 func _button(text: String, accent: Color) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(420, 76)
-	button.add_theme_font_size_override("font_size", 30)
+	button.custom_minimum_size = Vector2(420, 76) * _s()
+	button.add_theme_font_size_override("font_size", _fs(30))
 	_style_button(button, accent)
 	PressFeedback.apply(button)
 	return button
@@ -188,19 +238,25 @@ const MODE_LABEL_MARGIN := 28.0
 # that reflows.
 func _mode_button(name_text: String, lives_text: String, accent: Color) -> Button:
 	var button := Button.new()
-	button.custom_minimum_size = MODE_BUTTON_SIZE
+	# The two labels are placed by hand rather than by a container, so every
+	# measurement below has to come off the button's ACTUAL size - deriving them
+	# from the unscaled constant left both labels inside the left 420 of a
+	# 714-wide portrait button, printing "NORMAL3 lives" as one run-on string.
+	var button_size := MODE_BUTTON_SIZE * _s()
+	var margin := MODE_LABEL_MARGIN * _s()
+	button.custom_minimum_size = button_size
 	_style_button(button, accent)
 	PressFeedback.apply(button)
 
-	var half := MODE_BUTTON_SIZE.x * 0.5
+	var half := button_size.x * 0.5
 	var name_label := _mode_part_label(name_text, HORIZONTAL_ALIGNMENT_LEFT, accent)
-	name_label.position = Vector2(MODE_LABEL_MARGIN, 0)
-	name_label.size = Vector2(half - MODE_LABEL_MARGIN, MODE_BUTTON_SIZE.y)
+	name_label.position = Vector2(margin, 0)
+	name_label.size = Vector2(half - margin, button_size.y)
 	button.add_child(name_label)
 
 	var lives_label := _mode_part_label(lives_text, HORIZONTAL_ALIGNMENT_RIGHT, accent)
 	lives_label.position = Vector2(half, 0)
-	lives_label.size = Vector2(half - MODE_LABEL_MARGIN, MODE_BUTTON_SIZE.y)
+	lives_label.size = Vector2(half - margin, button_size.y)
 	button.add_child(lives_label)
 
 	return button
@@ -213,7 +269,7 @@ func _mode_part_label(text: String, align: int, accent: Color) -> Label:
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	l.horizontal_alignment = align
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	l.add_theme_font_size_override("font_size", 30)
+	l.add_theme_font_size_override("font_size", _fs(30))
 	l.add_theme_color_override("font_color", Color.WHITE)
 	l.add_theme_color_override("font_outline_color", accent)
 	l.add_theme_constant_override("outline_size", 4)
@@ -237,3 +293,4 @@ func _box(accent: Color, darken: float) -> StyleBoxFlat:
 	sb.border_color = accent
 	sb.set_content_margin_all(12)
 	return sb
+

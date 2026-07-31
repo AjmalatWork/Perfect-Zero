@@ -739,6 +739,19 @@ func stop_ambient() -> void:
 		player.stop()
 		player.volume_db = AMBIENT_SILENT_DB
 
+# Cuts any in-flight one-shot SFX (grade calls, ticks, catch sounds) from the
+# fire-and-forget pool. Godot doesn't pause AudioStreamPlayer playback just
+# because the tree is paused, so a PERFECT sound still playing when the pause
+# menu opens keeps sounding right through it - and a same-state restart
+# (ENDLESS_PLAYING/PLAYING -> itself, since pausing never touches
+# GameManager.current_state) never naturally cuts it either. Called from
+# Juice.reset_run_effects(), the same "fresh run" reset point the leftover
+# ring-burst fix uses, so a restart doesn't hand the old run's tail sound to
+# the new one.
+func stop_all_sfx() -> void:
+	for player in _players:
+		player.stop()
+
 func _on_state_changed(new_state: int) -> void:
 	var in_game := (new_state == GameManager.GameState.PLAYING
 		or new_state == GameManager.GameState.ENDLESS_PLAYING)

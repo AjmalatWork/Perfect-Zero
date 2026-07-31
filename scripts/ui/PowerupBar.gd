@@ -1,20 +1,30 @@
 extends Control
 class_name PowerupBar
 
-# The three Endless powerup buttons, stacked in a column to the left of the
-# board so they read as one control cluster instead of being split across both
-# sides. Built procedurally like every other screen in this project.
+# The three Endless powerup buttons, kept together as one control cluster rather
+# than split across both sides of the board. Built procedurally like every other
+# screen in this project.
 #
-# The 3x3 grid is 3*160 + 2*14 = 508px, centred in the 1600x900 canvas, so it
-# spans x 546..1054 - this column sits clear of that, in the left margin.
+# Landscape: a column in the left margin. The 3x3 grid is 3*160 + 2*14 = 508px
+# centred in the 1600x900 canvas, so it spans x 546..1054 and this column sits
+# clear of it.
+#
+# Portrait: that margin doesn't exist - the grid is 640 wide in a 900 canvas
+# (x 130..770) - so the column becomes a row below the grid instead. That also
+# puts the board and the powerups both inside one-handed thumb reach, which the
+# landscape layout never had to solve for.
+const LANDSCAPE_BUTTON_SIZE := Vector2(116, 116)
+const PORTRAIT_BUTTON_SIZE := Vector2(140, 140)   # 46dp -> 56dp, clearing the 48dp minimum
 
-const VIEWPORT_SIZE := Vector2(1600, 900)
-const BUTTON_SIZE := Vector2(116, 116)
-
-const COLUMN_X := 220.0
-const SHIELD_POS := Vector2(COLUMN_X, 322)
-const CLEAR_POS := Vector2(COLUMN_X, 462)
-const OVERCLOCK_POS := Vector2(COLUMN_X, 602)
+# Ordered SHIELD, CLEAR_ALL, OVERCLOCK - see _build().
+const LANDSCAPE_POSITIONS: Array[Vector2] = [
+	Vector2(220, 322), Vector2(220, 462), Vector2(220, 602),
+]
+# 3*140 + 2*40 = 500 wide, centred in 900. Sat below PORTRAIT_GRID_ZONE, which
+# ends at y 1100.
+const PORTRAIT_POSITIONS: Array[Vector2] = [
+	Vector2(200, 1150), Vector2(380, 1150), Vector2(560, 1150),
+]
 
 # Keyboard alternates to clicking. Handled as raw keycodes rather than InputMap
 # actions so this needs no project.godot input wiring - the buttons are the
@@ -29,28 +39,41 @@ var _buttons: Array = []
 
 func _ready() -> void:
 	position = Vector2.ZERO
-	size = VIEWPORT_SIZE
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_build()
+	Layout.changed.connect(_build)
 	Powerups.state_changed.connect(_on_state_changed)
 	Powerups.shield_absorbed.connect(_on_shield_absorbed)
 
+# Rebuilt wholesale on an orientation flip rather than repositioned: the button
+# scales its own internals off its height (see PowerupButton.configure), so a
+# size change has to go back through configure() anyway.
 func _build() -> void:
-	_add_button(PowerupSystem.Kind.SHIELD, SHIELD_POS)
-	_add_button(PowerupSystem.Kind.CLEAR_ALL, CLEAR_POS)
-	_add_button(PowerupSystem.Kind.OVERCLOCK, OVERCLOCK_POS)
+	for b in _buttons:
+		b.queue_free()
+	_buttons.clear()
 
-func _add_button(kind: int, pos: Vector2) -> void:
+	size = Layout.canvas_size
+	var portrait := Layout.is_portrait()
+	var positions: Array[Vector2] = PORTRAIT_POSITIONS if portrait else LANDSCAPE_POSITIONS
+	var button_size: Vector2 = PORTRAIT_BUTTON_SIZE if portrait else LANDSCAPE_BUTTON_SIZE
+
+	_add_button(PowerupSystem.Kind.SHIELD, positions[0], button_size)
+	_add_button(PowerupSystem.Kind.CLEAR_ALL, positions[1], button_size)
+	_add_button(PowerupSystem.Kind.OVERCLOCK, positions[2], button_size)
+
+func _add_button(kind: int, pos: Vector2, button_size: Vector2) -> void:
 	var btn := PowerupButton.new()
 	btn.position = pos
-	btn.size = BUTTON_SIZE
+	btn.size = button_size
 	btn.configure(kind)
 	add_child(btn)
 	_buttons.append(btn)
-	# Registered once, at the identity transform - activation effects are
-	# parented under the same node Juice punches/shakes, so both move together
-	# and the origin stays correct without re-registering every frame.
-	Powerups.register_button_origin(kind, btn.global_position + BUTTON_SIZE * 0.5)
+	# Registered once per build, at the identity transform - activation effects
+	# are parented under the same node Juice punches/shakes, so both move together
+	# and the origin stays correct without re-registering every frame. A rebuild
+	# (orientation flip) re-registers, so the effects follow the buttons.
+	Powerups.register_button_origin(kind, btn.global_position + button_size * 0.5)
 
 func _on_state_changed() -> void:
 	for b in _buttons:
@@ -73,6 +96,13 @@ func _unhandled_input(event: InputEvent) -> void:
 # --- One button -------------------------------------------------------------
 
 class PowerupButton extends Control:
+	# Every measurement below is authored against this height and multiplied by
+	# _s, the ratio the button was actually built at. Portrait uses a bigger
+	# button to clear the 48dp touch minimum, and without this the icon, labels
+	# and cooldown ring would all stay pinned to their landscape offsets inside a
+	# taller panel.
+	const BASE_HEIGHT := 116.0
+
 	const RING_RADIUS := 52.0
 	const RING_WIDTH := 6.0
 
@@ -86,6 +116,7 @@ class PowerupButton extends Control:
 
 	var kind: int = 0
 	var accent: Color = Color.WHITE
+	var _s: float = 1.0
 
 	var _style: StyleBoxFlat
 	var _icon: PowerupIcon
@@ -105,10 +136,12 @@ class PowerupButton extends Control:
 		kind = p_kind
 		accent = PowerupSystem.color_of(kind)
 		mouse_filter = Control.MOUSE_FILTER_STOP
+		# size is assigned by _add_button before this runs, so the ratio is known.
+		_s = size.y / BASE_HEIGHT
 
 		_style = StyleBoxFlat.new()
 		_style.bg_color = accent.darkened(0.86)
-		_style.set_corner_radius_all(18)
+		_style.set_corner_radius_all(roundi(18 * _s))
 		_style.set_border_width_all(3)
 		_style.border_color = accent
 		_style.shadow_color = Color(accent.r, accent.g, accent.b, 0.45)
@@ -119,30 +152,30 @@ class PowerupButton extends Control:
 		# The panel background is drawn in _draw() rather than as a child Panel
 		# for the same reason - a child background would paint over the icon.
 		_icon = PowerupIcon.new(kind)
-		_icon.position = Vector2((size.x - ICON_SIZE.x) * 0.5, ICON_TOP)
-		_icon.size = ICON_SIZE
+		_icon.size = ICON_SIZE * _s
+		_icon.position = Vector2((size.x - _icon.size.x) * 0.5, ICON_TOP * _s)
 		add_child(_icon)
 
-		_name_label = _make_label(15, accent)
+		_name_label = _make_label(roundi(15 * _s), accent)
 		_name_label.text = PowerupSystem.name_of(kind).to_upper()
-		_name_label.position = Vector2(0, 86)
-		_name_label.size = Vector2(size.x, 20)
+		_name_label.position = Vector2(0, 86 * _s)
+		_name_label.size = Vector2(size.x, 20 * _s)
 		add_child(_name_label)
 
 		# Omitted entirely on mobile - PowerupSystem.key_hint() returns "" there,
 		# and an empty label would still reserve a visibly blank line above the icon.
 		var hint := PowerupSystem.key_hint(kind)
 		if not hint.is_empty():
-			var key_label := _make_label(14, Color(1, 1, 1, 0.5))
+			var key_label := _make_label(roundi(14 * _s), Color(1, 1, 1, 0.5))
 			key_label.text = hint
-			key_label.position = Vector2(0, 2)
-			key_label.size = Vector2(size.x, 18)
+			key_label.position = Vector2(0, 2 * _s)
+			key_label.size = Vector2(size.x, 18 * _s)
 			add_child(key_label)
 
 		# Sits over the icon during a cooldown, blank otherwise.
-		_cd_label = _make_label(34, Color.BLACK)
-		_cd_label.position = Vector2(0, 38)
-		_cd_label.size = Vector2(size.x, 44)
+		_cd_label = _make_label(roundi(34 * _s), Color.BLACK)
+		_cd_label.position = Vector2(0, 38 * _s)
+		_cd_label.size = Vector2(size.x, 44 * _s)
 		_cd_label.visible = false
 		add_child(_cd_label)
 
@@ -242,18 +275,18 @@ class PowerupButton extends Control:
 		if cd_frac > 0.0:
 			# Recharge ring: grows back around the button as the cooldown runs
 			# down, so "how much longer" is readable without reading the number.
-			draw_arc(centre, RING_RADIUS, 0.0, TAU, 48, Color(1, 1, 1, 0.08),
-				RING_WIDTH, true)
+			draw_arc(centre, RING_RADIUS * _s, 0.0, TAU, 48, Color(1, 1, 1, 0.08),
+				RING_WIDTH * _s, true)
 			var swept := (1.0 - cd_frac) * TAU
 			if swept > 0.0:
-				draw_arc(centre, RING_RADIUS, -PI * 0.5, -PI * 0.5 + swept, 48,
-					Color(accent.r, accent.g, accent.b, 0.85), RING_WIDTH, true)
+				draw_arc(centre, RING_RADIUS * _s, -PI * 0.5, -PI * 0.5 + swept, 48,
+					Color(accent.r, accent.g, accent.b, 0.85), RING_WIDTH * _s, true)
 		elif active_frac > 0.0:
 			# Depletion bar: full width at the start of the window, shrinking to
 			# nothing as it closes. Centred so it collapses inward rather than
 			# draining off one side.
-			var track := Rect2(DEPLETION_INSET, size.y - DEPLETION_BOTTOM,
-				size.x - DEPLETION_INSET * 2.0, DEPLETION_HEIGHT)
+			var track := Rect2(DEPLETION_INSET * _s, size.y - DEPLETION_BOTTOM * _s,
+				size.x - DEPLETION_INSET * _s * 2.0, DEPLETION_HEIGHT * _s)
 			draw_rect(track, Color(1, 1, 1, 0.10), true)
 			var lit_w := track.size.x * active_frac
 			draw_rect(Rect2(track.position.x + (track.size.x - lit_w) * 0.5,

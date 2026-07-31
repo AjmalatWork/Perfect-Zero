@@ -108,6 +108,16 @@ func set_reduce_intensity(v: bool) -> void:
 	SaveManager.save_value(KEY_REDUCE_INTENSITY, v)
 	changed.emit()
 
+# --- Orientation ----------------------------------------------------------
+
+# No longer a player choice - mobile is portrait-only, locked at the manifest
+# level (project.godot's window/handheld/orientation, see Layout's own doc).
+# OS.has_feature("mobile") rather than a name check on "Android" so an iOS
+# target would inherit this for free; the Web export reports "web" and not
+# "mobile", so a phone browser stays landscape-only same as desktop.
+func is_portrait() -> bool:
+	return OS.has_feature("mobile")
+
 func _apply_volume() -> void:
 	_apply_bus_volume(AudioManager.BUS_SFX, volume)
 
