@@ -21,7 +21,7 @@ metadata/_custom_type_script = "uid://diaiectjrllp1"
 
 [resource]
 script = ExtResource("1_5wqp6")
-stage_name = "Stage 9"
+stage_name = "9"
 timers = Array[ExtResource("2_2fy0t")]([SubResource("Resource_decay9"), SubResource("Resource_0vjaj"), SubResource("Resource_o812j")])
 target_score = 2400
 metadata/_custom_type_script = "uid://bkq7siep0hkjh"

@@ -108,6 +108,21 @@ func set_reduce_intensity(v: bool) -> void:
 	SaveManager.save_value(KEY_REDUCE_INTENSITY, v)
 	changed.emit()
 
+# --- Debug-only test override ----------------------------------------------
+# Forces every player click, on any timer, to grade as PERFECT or GOOD instead
+# of whatever the real click timing would produce - a testing convenience for
+# exercising scoring/UI reactions without needing precise clicks. "" means off.
+# Deliberately NOT persisted: a fresh launch always starts at "" so a debug
+# build can never silently carry a stuck override from a previous session, and
+# there's no reason a testing toggle needs to survive a restart. Read by
+# TimerSlot._resolve_stop(), which re-checks OS.is_debug_build() itself before
+# honoring this - belt-and-suspenders against it ever affecting a release build.
+var dev_force_grade: String = ""  # "", "PERFECT", "GOOD"
+
+func set_dev_force_grade(v: String) -> void:
+	dev_force_grade = v
+	changed.emit()
+
 # --- Orientation ----------------------------------------------------------
 
 # No longer a player choice - mobile is portrait-only, locked at the manifest

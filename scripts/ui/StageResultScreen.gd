@@ -50,6 +50,7 @@ const ANTICIPATION_FADE_IN := 0.35
 const BADGE_SIZE := Vector2(300, 44)
 const BADGE_GLOW_SIZE := Vector2(520, 300)
 const BADGE_LANE_HEIGHT := 44.0   # reserved up front so a record can't reflow the column
+const FLOURISH_STAGGER := 0.55    # gap when NEW BEST and ALL PERFECT both land
 
 # Countup escalation. 0.16 puts a stage at full intensity after ~6 PERFECTs,
 # which is most of the way through a typical stage's stop count - so the ceiling
@@ -79,20 +80,32 @@ const BREATH_HOLD := 0.3
 const BREATH_OUT := 0.3
 
 # --- Palette --------------------------------------------------------------
-# One colour, one job. The screen settles into five roles and nothing borrows
-# another's:
+# Cyan is standard success, gold is reserved for achievement. The screen settles
+# into these roles and nothing borrows another's:
 #   CLEAR/FAIL - did you pass. Headline only.
 #   GOLD       - the outcome. The final score, and the record it may have set.
-#   NEON       - interactive. Buttons, matching the cyan every other screen
-#                already uses for "you can press this".
+#   NEON       - success and interaction, the cyan every other screen already
+#                uses. CLEAR_COLOR is deliberately this same cyan: clearing is
+#                the standard-success case, and giving it its own near-cyan
+#                would be a second colour saying one thing.
+#   FLAWLESS   - the rarer achievement. Held apart from GOLD specifically so an
+#                all-PERFECT clear can't be mistaken for a personal best, since
+#                the two legitimately land together (see _play_flawless).
 #   MUTED      - supporting. The arithmetic, the record line, the way out.
 #   TEXT_FILL  - the fill under all of it.
-# The tally line sits in MUTED rather than NEON specifically so gold arrives
-# unshared at the finale and so no static text wears the button colour.
-const CLEAR_COLOR := Color("39ff9e")   # green headline on clear
+# The tally line sits in MUTED so gold arrives unshared at the finale.
+#
+# No green anywhere on this screen. It survives only as the shared GOOD grade
+# colour on the transient per-stop signs, which belong to the game-wide grade
+# palette (ScoreManager.GRADE_COLORS) rather than to this screen's own language.
+const CLEAR_COLOR := Color("22d3ff")   # cyan headline on clear - see NEON above
 const FAIL_COLOR := Color("ff2e5e")    # red headline on fail
 const NEON := Color("22d3ff")
 const GOLD := Color("ffd23f")
+const FLAWLESS := Color("c8862e")      # deep amber/bronze gold, the all-PERFECT accent -
+                                        # richer and warmer than GOLD rather than a paler
+                                        # or brighter version of it, so a flawless clear
+                                        # reads as its own thing, not New Best turned up
 const MUTED := Color("8b90a8")
 const HEAT := Color("ff5a1e")          # flames and heat flashes, never text
 
@@ -149,6 +162,11 @@ var _wash: ColorRect
 var _anticipation: TextureRect
 var _badge: Label
 var _badge_glow: TextureRect
+# The two verdict lines - "how you played", as opposed to the badge above, which
+# is "what you scored". Mutually exclusive by construction, so they share one
+# lane; see _position_verdict.
+var _flawless_label: Label
+var _near_miss_label: Label
 
 # The finale's tier, kept so the outro transition can echo it without
 # recomputing a second, separately-tuned quality metric. Reset per reveal, so a
@@ -160,6 +178,13 @@ var _flame_grad_default: Gradient   # restored by _erupt; see the finale branch
 var _sign_ring: CPUParticles2D
 var _idle_tween: Tween
 var _transitioning: bool = false
+
+# Held true from the moment _finish_clear() decides the once-ever Endless-unlock
+# banner WILL fire, until that banner actually appears - see _finish_clear for
+# why this window needs to block navigation. _unlock_banner_layer additionally
+# tracks the banner itself once it's up, both for the same reason.
+var _awaiting_unlock: bool = false
+var _unlock_banner_layer: CanvasLayer
 
 var _reveal_streak: int = 0       # PERFECT-only; drives the "Nx PERFECT!" popup
 var _reveal_grade_streak: int = 0 # any grade repeating; drives the audio pitch climb
@@ -437,7 +462,11 @@ const GRADE_QUALITY := {
 # continuously interpolated tint just reads as "some colour", where the point is
 # that a player should recognise a top-tier finish by its colour alone.
 const TIER_CUTS := [0.55, 0.85]                                    # -> tier 1, tier 2
-const TIER_COLORS := [Color("6b7080"), Color("39ff9e"), Color("ffd23f")]
+# Grey -> cyan -> gold, the same "standard success, then achievement" walk the
+# palette above describes. The middle step was green, which read as a third
+# colour language on a screen that only has two, and tinted the anticipation
+# wash green-black over this game's dark blue-black backdrop.
+const TIER_COLORS := [Color("6b7080"), Color("22d3ff"), Color("ffd23f")]
 const TIER_WASH_ALPHA := [0.10, 0.18, 0.30]
 const WASH_IN := 0.12
 const WASH_OUT := 0.85
@@ -605,19 +634,45 @@ func _finish_clear(stage_score: int) -> void:
 	_build_buttons(true)
 	_start_final_idle()
 
+	# Decided up front, not just at the point of firing - the buttons just built
+	# above (and the back/ui_cancel path in _unhandled_input) are held disabled
+	# for this whole pending window. Without this, a fast NEXT STAGE/RETRY/BACK
+	# press could navigate away before the (possibly staggered) banner below ever
+	# fired - and since that banner lives on its own CanvasLayer, which (like
+	# every other CanvasLayer in this codebase) renders regardless of its parent
+	# screen's visible flag, it would still pop up moments later on top of
+	# whatever screen the player had already moved to instead of staying here.
+	var unlock_pending: bool = index + 1 == CampaignNavigator.ENDLESS_UNLOCK_STAGE \
+			and SaveManager.load_high_score("endless_unlock_seen") == 0
+	if unlock_pending:
+		_awaiting_unlock = true
+		_set_buttons_disabled(true)
+
 	if is_new_best:
 		_play_new_best_flourish()
 
+	# Layered on top of NEW BEST rather than replacing it: the two answer
+	# different questions (did you beat your score / did you play it clean) and
+	# legitimately land together. Staggered behind it in that case for the same
+	# reason the unlock banner below is - two celebrations on one frame blur into
+	# a single indistinct flash instead of reading as two pieces of news.
+	var flawless: bool = stage_controller != null and stage_controller.is_all_perfect()
+	if flawless:
+		if is_new_best:
+			await get_tree().create_timer(FLOURISH_STAGGER, true, false, true).timeout
+		_play_flawless()
+	else:
+		_show_near_miss()
+
 	# Fires once ever, the moment Stage 3 (CampaignNavigator.ENDLESS_UNLOCK_STAGE)
 	# is cleared - layered on top of the normal reveal exactly like NEW BEST is,
-	# rather than replacing anything above. Staggered behind it (not simultaneous)
-	# since Stage 3 being cleared for the first time is very plausibly also this
-	# stage's first-ever best, and the two flourishes would otherwise land on the
+	# rather than replacing anything above. Staggered behind whatever already
+	# fired, since Stage 3 being cleared for the first time is very plausibly also
+	# this stage's first-ever best, and the flourishes would otherwise land on the
 	# same beat and blur together.
-	if index + 1 == CampaignNavigator.ENDLESS_UNLOCK_STAGE \
-			and SaveManager.load_high_score("endless_unlock_seen") == 0:
+	if unlock_pending:
 		SaveManager.save_high_score("endless_unlock_seen", 1)
-		if is_new_best:
+		if is_new_best or flawless:
 			await get_tree().create_timer(0.9, true, false, true).timeout
 		_play_unlock_banner("ENDLESS MODE UNLOCKED!")
 
@@ -662,6 +717,65 @@ func _play_new_best_flourish() -> void:
 
 	AudioManager.play_new_best()
 
+# The rarer of the two achievements, and deliberately unlike NEW BEST in every
+# channel that carries meaning: a deeper bronze-gold rather than plain gold, its own lane
+# above the score rather than pinned to the number, a stamp landing from
+# oversize rather than a ribbon rotating into place, and its own sound. Both
+# can be on screen at once - a flawless clear very often IS also a personal
+# best - so reading them
+# apart at a glance is the entire requirement, and one shared colour or one
+# shared animation would undo it.
+#
+# Not gated behind any rank or tier: there is no such system here by design, and
+# this fires on its own merits whenever the stage was played clean.
+func _play_flawless() -> void:
+	if _flawless_label == null:
+		return
+	_position_verdict(_flawless_label)
+	_flawless_label.visible = true
+	_flawless_label.modulate.a = 0.0
+	_flawless_label.pivot_offset = _flawless_label.size * 0.5
+	_flawless_label.scale = Vector2(1.8, 1.8)
+
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(_flawless_label, "modulate:a", 1.0, 0.14)
+	tween.tween_property(_flawless_label, "scale", Vector2.ONE, 0.3) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+	AudioManager.play_all_perfect()
+
+# The consolation half of the same lane. Only shown when the attempt was
+# genuinely close, so it reads as "so nearly" rather than as a tally of
+# everything that went wrong - a "9 away" line on a scrappy clear is purely
+# discouraging, and the player already watched every one of those stops happen.
+const NEAR_MISS_MAX := 3
+
+func _show_near_miss() -> void:
+	if _near_miss_label == null or stage_controller == null:
+		return
+	var missed: int = stage_controller.non_perfect_count()
+	if missed <= 0 or missed > NEAR_MISS_MAX:
+		return
+	_near_miss_label.text = _near_miss_text(missed, stage_controller.non_perfect_grades())
+	_position_verdict(_near_miss_label)
+	_near_miss_label.visible = true
+	_near_miss_label.modulate.a = 0.0
+	var fade := create_tween()
+	fade.tween_property(_near_miss_label, "modulate:a", 1.0, 0.3)
+
+# Names the grade when the attempt missed on one kind ("2 GOODS AWAY"), which is
+# specific enough to tell the player what to tighten, and falls back to counting
+# stops when it was a mix - "1 GOOD AND 2 MISSES AWAY" is a sentence, not a nudge.
+func _near_miss_text(missed: int, grades: Array[String]) -> String:
+	if grades.size() != 1:
+		return "%d STOPS AWAY FROM ALL PERFECT" % missed
+	var grade: String = grades[0]
+	# MISS already ends in S, so the naive +"S" would read "MISSS".
+	var plural: String = grade if missed == 1 \
+		else ("%sES" % grade if grade.ends_with("S") else "%sS" % grade)
+	return "%d %s AWAY FROM ALL PERFECT" % [missed, plural]
+
 # A one-time, whole-mode announcement (Endless at Stage 3, Hardcore at full
 # completion) - deliberately its own popup rather than reusing the small corner
 # NEW BEST badge above (the two can legitimately fire on the same clear - see
@@ -678,6 +792,7 @@ func _play_unlock_banner(text: String) -> void:
 	var layer := CanvasLayer.new()
 	layer.layer = 35  # above this screen's own content, below PauseMenu (100)
 	add_child(layer)
+	_unlock_banner_layer = layer
 
 	var dim := ColorRect.new()
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -723,7 +838,11 @@ func _play_unlock_banner(text: String) -> void:
 	nice.add_theme_stylebox_override("hover", _make_box(GOLD, 0.7, 0.5, 12))
 	nice.add_theme_stylebox_override("pressed", _make_box(GOLD, 0.6, 0.4, 6))
 	PressFeedback.apply(nice)
-	nice.pressed.connect(layer.queue_free)
+	nice.pressed.connect(func():
+		layer.queue_free()
+		_unlock_banner_layer = null
+		_awaiting_unlock = false
+		_set_buttons_disabled(false))
 	var nice_wrap := CenterContainer.new()
 	nice_wrap.add_child(nice)
 	col.add_child(nice_wrap)
@@ -746,6 +865,20 @@ func _position_badge() -> void:
 	var score: Vector2 = _final_label.global_position - global_position
 	var score_center := score + _final_label.size * 0.5
 	_badge_glow.position = score_center - BADGE_GLOW_SIZE * _s() * 0.5
+
+# Both verdict lines share the grade-sign lane. That lane is guaranteed empty by
+# the time either can appear - the per-stop signs that own it have all faded well
+# before the finale lands - so this is free space already reserved in the column,
+# directly above the score zone, costing no extra height. A clear either was
+# flawless or it wasn't, so the two can never want the lane at once.
+#
+# Deliberately not the badge lane: NEW BEST lives there, and a flawless clear is
+# very often also a personal best, so the two would collide exactly when both
+# matter most.
+func _position_verdict(label: Label) -> void:
+	var lane: Vector2 = _sign_anchor.global_position - global_position
+	label.size = Vector2(_sign_anchor.size.x, label.size.y)
+	label.position = Vector2(lane.x, lane.y + (_sign_anchor.size.y - label.size.y) * 0.5)
 
 # Keeps the screen from going completely static while the player reads the
 # result. Applied to the final score rather than to a grade sign: the per-stop
@@ -821,6 +954,16 @@ func _reset_display(cleared: bool) -> void:
 	# here for a retry that lands back on a normal result.
 	_record_label.visible = true
 
+	# Defensive: normal input handling already keeps the unlock-banner window
+	# from overlapping a retry (buttons and back are both held for its duration -
+	# see _finish_clear/_unhandled_input), but a fresh reveal starting with this
+	# somehow still armed would otherwise leave every button on the new attempt
+	# permanently disabled with no popup ever coming to release them.
+	if _unlock_banner_layer != null and is_instance_valid(_unlock_banner_layer):
+		_unlock_banner_layer.queue_free()
+	_unlock_banner_layer = null
+	_awaiting_unlock = false
+
 	# Cleared unconditionally: the FAIL path skips _hold_breath entirely, and a
 	# reveal interrupted mid-breath would otherwise leave the screen dimmed.
 	_dim.color.a = 0.0
@@ -834,6 +977,14 @@ func _reset_display(cleared: bool) -> void:
 		_badge.rotation = 0.0
 	if _badge_glow != null:
 		_badge_glow.visible = false
+	# Scale reset alongside visibility: the flawless stamp animates from oversize,
+	# so an attempt that doesn't earn it would otherwise inherit the transform the
+	# last one settled on.
+	if _flawless_label != null:
+		_flawless_label.visible = false
+		_flawless_label.scale = Vector2.ONE
+	if _near_miss_label != null:
+		_near_miss_label.visible = false
 
 	# A retry inherits the previous attempt's skip state otherwise, which would
 	# skip the next reveal before the player had touched anything. Cleared for
@@ -1109,9 +1260,28 @@ func _unhandled_input(event: InputEvent) -> void:
 	var s := GameManager.current_state
 	if s != GameManager.GameState.STAGE_CLEAR and s != GameManager.GameState.FAIL:
 		return
-	if event.is_action_pressed("ui_cancel"):
-		_on_title()
+	if not event.is_action_pressed("ui_cancel"):
+		return
+	# The unlock banner has no ui_cancel handling of its own (only its OKAY!
+	# button dismisses it) - without this, back would fall straight through to
+	# _on_title() below and leave the popup's CanvasLayer stranded over the
+	# title screen, the same class of bug already fixed for PowerupTutorial's
+	# popup. Closes it here instead, same as EndlessModeSelect's primer.
+	if _unlock_banner_layer != null and is_instance_valid(_unlock_banner_layer):
+		_unlock_banner_layer.queue_free()
+		_unlock_banner_layer = null
+		_awaiting_unlock = false
+		_set_buttons_disabled(false)
 		get_viewport().set_input_as_handled()
+		return
+	# Banner decided but not yet shown - buttons are already disabled for this
+	# window (see _finish_clear), so back is held too rather than being the one
+	# path that can still slip past it.
+	if _awaiting_unlock:
+		get_viewport().set_input_as_handled()
+		return
+	_on_title()
+	get_viewport().set_input_as_handled()
 
 # Both non-RETRY exits play the tier outro: either is "leaving the result
 # screen", which is what the effect is echoing. RETRY deliberately does not -
@@ -1186,6 +1356,14 @@ func _show_campaign_complete() -> void:
 		_badge.visible = false
 	if _badge_glow != null:
 		_badge_glow.visible = false
+	# The final stage's own clear reveal may have shown either of these (near-miss
+	# or flawless) as part of ITS result, moments before the player pressed NEXT
+	# STAGE into this campaign-complete message - without hiding them they bleed
+	# through underneath the headline instead of being replaced by it.
+	if _near_miss_label != null:
+		_near_miss_label.visible = false
+	if _flawless_label != null:
+		_flawless_label.visible = false
 
 	_headline.text = COMPLETE_TEXT
 	_headline.add_theme_font_size_override("font_size", _fs(FS_COMPLETE))  # long text: smaller so it fits
@@ -1361,6 +1539,41 @@ func _build_ui() -> void:
 	_badge.visible = false
 	_badge.z_index = 22
 	add_child(_badge)
+
+	# Both verdict lines are free-floating for the same reason the badge is:
+	# appearing must not reflow a column the player is already reading. Sized and
+	# styled off the badge deliberately - ALL PERFECT is its peer, not a smaller
+	# footnote to it - with the bronze-gold tint and the wording carrying the
+	# difference.
+	#
+	# Fill only lifted 0.15 (not GOLD's badge treatment of +0.55) - the point is
+	# for this to read as a *deeper*, richer gold than New Best's, not a paler
+	# one, so the fill has to stay visibly darker than plain GOLD rather than
+	# converging toward it. Outline darkened further to give it real depth against
+	# the dark backdrop.
+	_flawless_label = _make_label(FS_BADGE, FLAWLESS.darkened(0.4))
+	_flawless_label.text = "ALL PERFECT!"
+	_flawless_label.add_theme_color_override("font_color", FLAWLESS.lightened(0.15))
+	_flawless_label.size = BADGE_SIZE * _s()
+	_flawless_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_flawless_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_flawless_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_flawless_label.visible = false
+	_flawless_label.z_index = 22
+	add_child(_flawless_label)
+
+	# The consolation half of the same lane: quiet supporting weight, not a
+	# celebration, so it takes the record line's size and muted treatment rather
+	# than the badge's.
+	_near_miss_label = _make_label(FS_SUPPORT, Color(0, 0, 0, 0.6), 3)
+	_near_miss_label.add_theme_color_override("font_color", MUTED)
+	_near_miss_label.size = Vector2(BADGE_SIZE.x, 34.0) * _s()
+	_near_miss_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_near_miss_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_near_miss_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_near_miss_label.visible = false
+	_near_miss_label.z_index = 22
+	add_child(_near_miss_label)
 
 	# Free-floating streak popup near the top (not in the centered column).
 	_streak_label = _make_label(FS_STREAK, GOLD)

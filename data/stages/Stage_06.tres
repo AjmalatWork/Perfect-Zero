@@ -59,7 +59,7 @@ metadata/_custom_type_script = "uid://diaiectjrllp1"
 
 [resource]
 script = ExtResource("1_htj4n")
-stage_name = "Stage 6"
+stage_name = "6"
 is_bonus_stage = true
 timers = Array[ExtResource("2_frusb")]([SubResource("Resource_0vjaj"), SubResource("Resource_g4cns"), SubResource("Resource_xghof"), SubResource("Resource_yw63u"), SubResource("Resource_vjvet"), SubResource("Resource_8cx6e"), SubResource("Resource_5cbm7"), SubResource("Resource_qixd6"), SubResource("Resource_jqj1t")])
 target_score = 36000

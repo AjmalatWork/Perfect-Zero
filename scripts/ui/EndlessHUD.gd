@@ -26,6 +26,19 @@ var _meter_fill: ColorRect
 var _meter_target: float = 0.0
 var _bottom_row: Control
 
+# --- Live streak counter (persistent, distinct from the growth-pop above) ---
+var _streak_counter: Label
+
+# --- Pre-run target + live overtake/milestone reactions (Reward brief §5-7) -
+# _target_best comes from EndlessRunner.start_run() (the record this run is
+# chasing); 0 means no record exists yet, which suppresses both reactions
+# entirely rather than firing against a meaningless baseline.
+var _target_best: int = 0
+var _overtake_fired: bool = false
+var _milestone_label: Label
+const MILESTONE_VALUES := [1000, 5000, 10000]
+var _milestones_fired: Dictionary = {}
+
 # Authored (inset-free) position; _apply_safe_area() offsets from this. A
 # function rather than a const now that the canvas height differs by orientation.
 func _bottom_row_pos() -> Vector2:
@@ -80,6 +93,25 @@ func _build() -> void:
 	_streak_popup.modulate.a = 0.0
 	add_child(_streak_popup)
 
+	# Persistent readout (unlike _streak_popup, which only flashes on growth) -
+	# top-right corner so it doesn't compete with the centered equation/total/meter
+	# column. Hidden below streak 2, same threshold the popup already celebrates at.
+	_streak_counter = _make_label(24, GOLD)
+	_streak_counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_streak_counter.position = Vector2(Layout.canvas_size.x - 190, 18)
+	_streak_counter.size = Vector2(170, 34)
+	_streak_counter.visible = false
+	add_child(_streak_counter)
+
+	# Milestone stinger - shares the streak popup's vertical slot below the meter
+	# but is its own label so a milestone and a streak-growth pop landing on the
+	# same frame don't overwrite each other's text.
+	_milestone_label = _make_label(34, GOLD)
+	_milestone_label.position = Vector2(0, 190)
+	_milestone_label.size = Vector2(Layout.canvas_size.x, 42)
+	_milestone_label.modulate.a = 0.0
+	add_child(_milestone_label)
+
 	# Fail crosses, bottom-center. Held as a field because this row sits only
 	# 60px off the bottom edge - exactly where Android's gesture navigation bar
 	# lands - so it gets lifted by the safe-area inset (see _apply_safe_area).
@@ -120,6 +152,10 @@ func _apply_canvas_metrics() -> void:
 		_meter_track.position = Vector2((w - METER_WIDTH) * 0.5, 126)
 	if _streak_popup != null:
 		_streak_popup.size = Vector2(w, 46)
+	if _streak_counter != null:
+		_streak_counter.position = Vector2(w - 190, 18)
+	if _milestone_label != null:
+		_milestone_label.size = Vector2(w, 42)
 	if _bottom_row != null:
 		_bottom_row.size = Vector2(w, 50)
 		for child in _bottom_row.get_children():
@@ -135,9 +171,71 @@ func _on_tally_changed(tally: int, mult: float) -> void:
 	# resolve_stage() zeroes the segment on a fail, so the bar drains on its own.
 	_meter_target = clampf(sqrt(float(tally) * mult / METER_FULL), 0.0, 1.0)
 
+	# campaign_total_changed (below) only fires when a segment BANKS, i.e. on a
+	# fail - in Hardcore that's exactly once, right as the run ends, so an
+	# overtake/milestone check gated on that alone would only ever fire too late
+	# (or never, since the run is already over). tally_changed fires on every
+	# click instead, so the check runs against a live projected total - banked
+	# total plus the unbanked segment in flight - using the same int(tally*mult)
+	# truncation resolve_stage() itself uses, so the number this fires against
+	# matches what actually banks moments later.
+	var live_total := ScoreManager.campaign_total + int(float(tally) * mult)
+	_check_overtake(live_total)
+	_check_milestones(live_total)
+
 func _on_total_changed(total: int) -> void:
 	_total.text = "TOTAL   %d" % total
 	_flash_meter()
+	_check_overtake(total)
+	_check_milestones(total)
+
+# Called by EndlessRunner.start_run() with the record this run is chasing (0 if
+# none exists yet). Resets both one-shot reaction trackers so a retry doesn't
+# inherit the previous run's fired state.
+func set_target(best: int) -> void:
+	_target_best = best
+	_overtake_fired = false
+	_milestones_fired.clear()
+
+# Fires once, the instant live score first crosses the record it's chasing.
+# Score can dip back below via a later miss (multiplier resets, not the banked
+# total, so this specifically can't happen from a resolve - kept guarded by
+# _overtake_fired regardless, matching the "never re-fire" brief requirement).
+func _check_overtake(total: int) -> void:
+	if _overtake_fired or _target_best <= 0:
+		return
+	if total > _target_best:
+		_overtake_fired = true
+		_show_overtake_pulse()
+
+func _show_overtake_pulse() -> void:
+	# The crossing moment usually lands mid-segment (before the next bank), where
+	# the live number lives on the equation - TOTAL alone wouldn't visibly change
+	# yet at the instant this fires. Both get the pulse so it reads correctly
+	# whether the crossing happened mid-segment or right on a bank.
+	_pop(_equation)
+	_pop(_total)
+	for label in [_equation, _total]:
+		var tween := create_tween()
+		tween.tween_property(label, "modulate", Color(1.4, 1.3, 0.9, 1.0), 0.1)
+		tween.tween_property(label, "modulate", Color.WHITE, 0.5)
+
+func _check_milestones(total: int) -> void:
+	for m in MILESTONE_VALUES:
+		if total >= m and not _milestones_fired.has(m):
+			_milestones_fired[m] = true
+			_show_milestone(m)
+
+func _show_milestone(value: int) -> void:
+	_milestone_label.text = "%d!" % value
+	_milestone_label.pivot_offset = _milestone_label.size * 0.5
+	_milestone_label.modulate.a = 1.0
+	_milestone_label.scale = Vector2(1.3, 1.3)
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(_milestone_label, "scale", Vector2.ONE, 0.18) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_property(_milestone_label, "modulate:a", 0.0, 0.7).set_delay(0.7)
 
 # The only thing that banks a segment in Endless is a fail, so the bank flash
 # doubles as the "you lost the combo" read.
@@ -165,6 +263,16 @@ func _on_streak_changed(count: int) -> void:
 	if count > _last_streak and count >= 2:
 		_show_streak_popup(count)
 	_last_streak = count
+	_update_streak_counter(count)
+
+# Live readout, unlike _show_streak_popup above - reflects the count on every
+# change (growth, break, reset), not just the celebratory growth moments.
+func _update_streak_counter(count: int) -> void:
+	if _streak_counter == null:
+		return
+	_streak_counter.visible = count >= 2
+	if count >= 2:
+		_streak_counter.text = "STREAK %d" % count
 
 func _show_streak_popup(count: int) -> void:
 	# Same fix as StageResultScreen's version: a fast streak can retrigger this

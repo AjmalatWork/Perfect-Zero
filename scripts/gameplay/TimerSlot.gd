@@ -417,6 +417,16 @@ func _resolve_stop(forced_grade: String, from_click: bool) -> void:
 		distance = _stop_distance()
 		grade = _grade_for_distance(distance)
 
+	# Debug-only test override (Options menu, debug builds only): forces every
+	# real click to grade as PERFECT or GOOD, regardless of actual timing or
+	# timer type. Distance is overridden to match (0.0 for PERFECT, GOOD_MAX for
+	# GOOD) so scoring reflects the forced grade instead of the real click's raw
+	# distance. Gated to from_click/forced_grade=="" so it never touches Nuke's
+	# force_resolve() or an expiry's own forced grade.
+	if from_click and forced_grade == "" and OS.is_debug_build() and Settings.dev_force_grade != "":
+		grade = Settings.dev_force_grade
+		distance = 0.0 if grade == "PERFECT" else GOOD_MAX
+
 	# Shield downgrades the first FAIL inside its window to a MISS. Filtering
 	# here - ahead of the flash, the grade sign and the EventBus emit - means the
 	# player sees the MISS they actually got rather than a FAIL that silently

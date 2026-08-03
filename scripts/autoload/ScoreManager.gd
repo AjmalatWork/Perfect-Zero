@@ -110,7 +110,17 @@ func register_result(grade: String, distance: float, bonus_factor: float = 1.0) 
 	perfect_streak_changed.emit(perfect_streak)
 
 	if grade == "FAIL":
-		multiplier = 1.0
+		# Multiplier is deliberately left untouched here - resolve_stage() (always
+		# called right after this, from EndlessRunner._handle_fail) banks
+		# tally x multiplier using whatever the player actually built up, then
+		# resets it to 1.0 itself. Zeroing it here first used to silently bank
+		# EVERY segment (in both Normal and Hardcore - neither mode branches
+		# through different code here) at a flat x1.0 regardless of the real
+		# multiplier. Same-size bug everywhere it happened, but its impact scales
+		# with how much of the run rides on one segment: least visible in Normal's
+		# early low-life fails (a small early segment losing its multiplier is a
+		# small loss), most visible in Hardcore, where the entire run is exactly
+		# one segment and 100% of its score was riding on this.
 		tally_changed.emit(stage_tally, multiplier)
 		return
 

@@ -508,6 +508,22 @@ func play_new_best() -> void:
 # expansive than the tighter run-of-notes NEW_BEST_RUN uses.
 const UNLOCK_CHORD := [392.0, 587.33, 784.0, 1046.5]
 
+# Clearing an Arcade stage with every timer PERFECT. A third distinct kind of
+# news again - "you played it clean", not "you beat your own record" and not
+# "new content available" - and it can land on the same clear as play_new_best(),
+# so it has to be told apart from it by ear as well as on screen.
+#
+# A pure major triad spanning an octave, pitched above NEW_BEST_RUN and left to
+# ring far longer (decay 3.0 against its 4.5, harmonic 0.55 against its 0.4): the
+# record sound is a tight run of notes, this one shimmers.
+const ALL_PERFECT_RUN := [783.99, 987.77, 1174.66, 1567.98]
+
+func play_all_perfect() -> void:
+	if USE_LEGACY_ONESHOT_SFX:
+		_play(_get_arpeggio(ALL_PERFECT_RUN, 0.11, 0.42))
+	else:
+		_play(_get_punchy_sequence(ALL_PERFECT_RUN, 0.11, 0.42, 3.0, 0.55))
+
 func play_unlock() -> void:
 	if USE_LEGACY_ONESHOT_SFX:
 		_play(_get_chord(UNLOCK_CHORD, 0.8, 0.42))

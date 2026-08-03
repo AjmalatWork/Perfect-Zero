@@ -92,6 +92,37 @@ func current_stage_timer_types() -> Array[int]:
 			out.append(td.timer_type)
 	return out
 
+# --- Attempt grade summary -------------------------------------------------
+# All three read `pending_results`, which is already the per-stop grade record
+# scoring keeps - there is deliberately no second tracking mechanism for this.
+#
+# Only meaningful on a cleared stage. A FAIL ends the stage without appending
+# its own stop and an expiry appends nothing at all, so a failed attempt's list
+# is just whatever landed before it ended, not a full account of the stage.
+
+func non_perfect_count() -> int:
+	var count := 0
+	for r in pending_results:
+		if r.get("grade", "") != "PERFECT":
+			count += 1
+	return count
+
+# Guarded on emptiness so a stage with no timers - or a query made before a
+# single stop has landed - can't report a vacuous "all perfect".
+func is_all_perfect() -> bool:
+	return not pending_results.is_empty() and non_perfect_count() == 0
+
+# The distinct non-PERFECT grades this attempt produced, first-seen order. Lets
+# the result screen name them specifically ("2 GOODs away") when there is only
+# one kind, and fall back to a generic count when the miss was mixed.
+func non_perfect_grades() -> Array[String]:
+	var out: Array[String] = []
+	for r in pending_results:
+		var grade: String = r.get("grade", "")
+		if grade != "PERFECT" and not out.has(grade):
+			out.append(grade)
+	return out
+
 func _clear_slots() -> void:
 	# Free the row containers (which frees the timers inside them).
 	for child in timer_container.get_children():

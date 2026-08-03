@@ -149,6 +149,8 @@ func start_run(lives: int) -> void:
 	if endless_hud != null:
 		endless_hud.set_max_lives(max_lives)
 		endless_hud.update_crosses(0)
+		var suffix := "hardcore" if max_lives <= 1 else "normal"
+		endless_hud.set_target(SaveManager.load_high_score("highscore_endless_%s" % suffix))
 
 	# A retry started from the end screen inherits whatever the previous run left
 	# armed, and start_run() is the one path every fresh run goes through.
@@ -524,9 +526,9 @@ func _dispatch_reaction(source: TimerSlot, type: int) -> void:
 		EventBus.reaction_fired.emit(source, type, affected)
 
 func _handle_fail() -> void:
-	# resolve_stage banks tally x multiplier then resets the segment - exactly what
-	# a fail needs. (The multiplier was just reset to 1.0 by register_result("FAIL"),
-	# so the failed segment banks at x1.0.)
+	# resolve_stage banks tally x multiplier (the multiplier as it stood right
+	# before this fail - see ScoreManager.register_result's FAIL branch) then
+	# resets the segment to 0/1.0x for whatever comes next.
 	ScoreManager.resolve_stage(true)
 	fail_count += 1
 	if endless_hud != null:

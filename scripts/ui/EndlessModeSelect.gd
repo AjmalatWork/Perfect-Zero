@@ -11,6 +11,11 @@ const TEXT_FILL := Color("dfe3ee")
 @export var campaign_navigator: CampaignNavigator
 
 var _hardcore_button: Button
+var _normal_caption: Label
+var _hardcore_caption: Label
+
+const SCORE_KEY_NORMAL := "highscore_endless_normal"
+const SCORE_KEY_HARDCORE := "highscore_endless_hardcore"
 # The powerup primer's own CanvasLayer while it's up, else null. Tracked because
 # a CanvasLayer isn't a CanvasItem: hiding this screen does not hide it, so any
 # exit taken while it's open has to free it explicitly - the same reason
@@ -54,6 +59,12 @@ func _on_state_changed(new_state: int) -> void:
 	# Re-evaluated on every visit (not just once at _ready) since campaign
 	# progress made elsewhere can unlock this between visits to this screen.
 	_style_hardcore_lock()
+	# Refreshed for the same reason as the lock above - a run played since the
+	# last visit here may have set a new record.
+	if _normal_caption != null:
+		_refresh_target_caption(_normal_caption, SCORE_KEY_NORMAL)
+	if _hardcore_caption != null:
+		_refresh_target_caption(_hardcore_caption, SCORE_KEY_HARDCORE)
 
 
 # A plain resize is a re-measure; an orientation change rebuilds, because the
@@ -109,9 +120,13 @@ func _build() -> void:
 	var normal := _mode_button("NORMAL", "3 lives", NEON)
 	normal.pressed.connect(func(): _start(3))
 	col.add_child(_wrap(normal))
+	_normal_caption = _target_caption(SCORE_KEY_NORMAL)
+	col.add_child(_normal_caption)
 
 	_hardcore_button = _mode_button("HARDCORE", "1 life", RED)
 	col.add_child(_wrap(_hardcore_button))
+	_hardcore_caption = _target_caption(SCORE_KEY_HARDCORE)
+	col.add_child(_hardcore_caption)
 
 	# Sized and colored to match every other screen's BACK button (200x64,
 	# same cyan as the title screen's ARCADE button) rather than the mode
@@ -206,6 +221,23 @@ func _wrap(c: Control) -> Control:
 	var w := CenterContainer.new()
 	w.add_child(c)
 	return w
+
+# Pre-run target (Reward brief §5) - sits under each mode button, muted so it
+# reads as context rather than competing with the button's own accent color.
+# First-run framing (no stored record) is a distinct message rather than
+# "BEAT YOUR BEST: 0", which would read as a real, beatable target of zero.
+func _target_caption(key: String) -> Label:
+	var l := Label.new()
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.add_theme_font_size_override("font_size", _fs(20))
+	l.add_theme_color_override("font_color", TEXT_FILL)
+	l.modulate.a = 0.75
+	_refresh_target_caption(l, key)
+	return l
+
+func _refresh_target_caption(label: Label, key: String) -> void:
+	var best: int = SaveManager.load_high_score(key)
+	label.text = ("BEAT YOUR BEST: %d" % best) if best > 0 else "NO RECORD YET"
 
 func _heading(text: String, font_size: int, accent: Color, outline: int = 5) -> Label:
 	var l := Label.new()

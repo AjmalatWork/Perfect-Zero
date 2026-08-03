@@ -4,7 +4,7 @@ class_name PowerupIcon
 # One powerup glyph, drawn live rather than loaded as a rasterized SVG texture.
 # A baked bitmap goes soft under this project's canvas_items stretch scaling the
 # 1600x900 canvas to the real window size; a primitive redrawn each frame can't.
-# Same reasoning as the drawn pause icon, the life-crosses, and NeonCheckBox.
+# Same reasoning as the drawn pause icon, the life-crosses, and NeonToggle.
 #
 # Shared by the powerup buttons, the Help screen legend and the first-run
 # tutorial, so the three can't drift apart the way separate copies would.

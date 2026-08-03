@@ -36,8 +36,12 @@ const FS_RECORD := 24      # the one supporting line for the score
 const FS_BUTTON := 28
 # Fixed so every row is the same overall width regardless of its own caption
 # or value length - sized to fit the longest caption that can appear,
-# "PREVIOUS BEST (Hardcore)", not the shortest.
-const STAT_CAPTION_WIDTH := 270.0
+# "PREVIOUS BEST (Hardcore)" at FS_RECORD. That string actually measures 307px
+# (confirmed via Font.get_string_size, not eyeballed) - 270 was never wide
+# enough despite the comment's original intent, and the overflow silently
+# pushed that row's value cell right of BEST STREAK/SURVIVED's, since a Label's
+# custom_minimum_size only sets a floor, not a clamp. 320 leaves real margin.
+const STAT_CAPTION_WIDTH := 320.0
 const STAT_ROW_SEPARATION := 16.0
 
 # The caption and its value are meant to read as one tight pair. Scaling this
@@ -332,6 +336,13 @@ func _play_new_best_flourish(improved: PackedStringArray, token: int) -> void:
 	_newbest_label.text = "NEW BEST:  %s" % "  +  ".join(improved)
 	_newbest_label.visible = true
 	_newbest_label.modulate.a = 0.0
+	# Captured now, at scale 1.0, before the pop-in below - Control.global_position
+	# tracks the (unscaled) top-left corner, which moves away from the visual
+	# center the instant scale != 1.0 around a center pivot_offset. Reading
+	# global_position AFTER setting scale (as this used to) grabbed a point offset
+	# up-left of where the label actually renders, which is what put the burst
+	# ring visibly off to the side instead of centered on the text.
+	var burst_center: Vector2 = _newbest_label.global_position + _newbest_label.size * 0.5
 	_newbest_label.pivot_offset = _newbest_label.size * 0.5
 	_newbest_label.scale = Vector2(1.6, 1.6)
 	# The record belongs to the number, same idiom as StageResultScreen's badge:
@@ -362,8 +373,7 @@ func _play_new_best_flourish(improved: PackedStringArray, token: int) -> void:
 	# a record is the one moment this screen is allowed to be its biggest beat.
 	Juice.hit_stop(NEWBEST_HITSTOP_MULT)
 	Juice.punch(3.0)
-	Juice.click_burst(
-		_newbest_label.global_position + _newbest_label.size * 0.5, "PERFECT", -1, 1.0)
+	Juice.click_burst(burst_center, "PERFECT", -1, 1.0)
 
 	# A second burst square on the score itself, staggered slightly behind the
 	# first - two beats read as a bigger event than one. Guarded by token: a

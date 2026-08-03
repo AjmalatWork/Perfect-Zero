@@ -63,6 +63,55 @@ func _on_stage_cleared() -> void:
 	var highest: int = SaveManager.load_high_score("highest_stage_reached")
 	if current_index + 1 > highest:
 		SaveManager.save_high_score("highest_stage_reached", current_index + 1)
+	if stage_controller != null and stage_controller.is_all_perfect():
+		_record_all_perfect(current_index)
+
+# --- All-PERFECT record ----------------------------------------------------
+# Per stage, whether it has EVER been cleared with every timer graded PERFECT.
+# Binary and permanent by design: there is deliberately no tier/rank system here
+# (no Bronze/Silver/Gold, no star rating), and a later scrappier clear never
+# takes an earned flag back - the same "best persists" rule the per-stage score
+# records already follow.
+#
+# Stored through the int-typed, type-guarded save_high_score path rather than
+# the untyped generic store, matching `highest_stage_reached` and
+# `endless_unlock_seen` - an unset stage simply reads 0, which is the correct
+# "not earned yet" answer with no migration needed for existing saves.
+const ALL_PERFECT_KEY := "allperfect_stage_%d"
+
+# A second, transient flag per stage: "earned but not yet shown on Level
+# Select." Persisted (not just an in-memory var) rather than the reveal being
+# played the instant the flag is set - StageResultScreen is a separate screen
+# from Level Select, and this is what lets the badge's own "it just filled in"
+# animation happen the next time the player actually looks at the grid, rather
+# than requiring some awkward hand-off between two unrelated screens. Consumed
+# (read-and-cleared) by LevelSelect via take_pending_all_perfect() the moment
+# it plays the reveal, so revisiting later shows the plain settled state.
+const ALL_PERFECT_PENDING_KEY := "allperfect_pending_%d"
+
+func has_all_perfect(index: int) -> bool:
+	return SaveManager.load_high_score(ALL_PERFECT_KEY % index) != 0
+
+func _record_all_perfect(index: int) -> void:
+	if has_all_perfect(index):
+		return
+	SaveManager.save_high_score(ALL_PERFECT_KEY % index, 1)
+	SaveManager.save_high_score(ALL_PERFECT_PENDING_KEY % index, 1)
+
+# Every stage index whose reveal hasn't been shown yet, in stage order.
+# Clearing the flags here (rather than leaving that to the caller) means an
+# animation interrupted mid-play - back button, a fast re-entry - simply isn't
+# repeated next visit instead of risking a stuck or doubled reveal; Level
+# Select rebuilds its whole grid from scratch on every visit anyway, so the
+# settled (fully-earned, unanimated) state is always there to fall back to.
+func take_pending_all_perfect() -> Array[int]:
+	var out: Array[int] = []
+	var stage_count: int = campaign.stages.size() if campaign != null else 0
+	for i in range(stage_count):
+		if SaveManager.load_high_score(ALL_PERFECT_PENDING_KEY % i) != 0:
+			out.append(i)
+			SaveManager.save_high_score(ALL_PERFECT_PENDING_KEY % i, 0)
+	return out
 
 func is_last_stage() -> bool:
 	return campaign == null or current_index + 1 >= campaign.stages.size()
