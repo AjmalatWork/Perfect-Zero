@@ -29,6 +29,20 @@ const PORTRAIT_WIDTH := 900.0
 # rather than guessing something new.
 const PORTRAIT_SIZE_FALLBACK := Vector2(900, 1600)
 
+# Clamp on the computed portrait height, in canvas units. Every portrait screen
+# positions itself with absolute pixel offsets against canvas_size.y, so an
+# unclamped height can collapse the whole layout: split-screen, a foldable
+# unfolded, or a free-form/DeX window can all report window.x > window.y even
+# on a manifest-locked-portrait build (userPortrait doesn't prevent any of
+# those), which would otherwise send _compute_portrait_size() below 900 tall -
+# the HUD, the board zone and the fail-cross row all start overlapping. The
+# upper bound guards the opposite case (a narrow split-screen sliver) from
+# stretching the canvas absurdly tall. 1200 covers a squarish 4:3-ish window
+# (900/1200 = 3:4) without the board zone (720 tall) crowding the HUD above
+# it; 2400 covers past 21:9 (900/2400 = 3:8) with room to spare.
+const PORTRAIT_HEIGHT_MIN := 1200.0
+const PORTRAIT_HEIGHT_MAX := 2400.0
+
 var canvas_size: Vector2 = LANDSCAPE_SIZE
 var _portrait: bool = false
 
@@ -71,7 +85,8 @@ func _compute_portrait_size() -> Vector2:
 	if window.x <= 0 or window.y <= 0:
 		return PORTRAIT_SIZE_FALLBACK
 	var aspect: float = float(window.x) / float(window.y)
-	return Vector2(PORTRAIT_WIDTH, roundf(PORTRAIT_WIDTH / aspect))
+	var height := clampf(roundf(PORTRAIT_WIDTH / aspect), PORTRAIT_HEIGHT_MIN, PORTRAIT_HEIGHT_MAX)
+	return Vector2(PORTRAIT_WIDTH, height)
 
 # Dev-only. Run with `Godot --path . -- --portrait` to force the portrait canvas
 # on any platform, so the layouts can be iterated on desktop instead of costing a

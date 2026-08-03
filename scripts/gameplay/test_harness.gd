@@ -16,8 +16,8 @@ func _unhandled_input(event: InputEvent) -> void:
 func _on_timer_stopped(source: Node, grade: String, type: int, distance: float) -> void:
 	print("Stopped! Grade: ", grade, " Type: ", type, " Distance: ", distance)
 
-func _on_timer_expired(source: Node) -> void:
-	print("Timer expired unstopped!")
+func _on_timer_expired(source: Node, grade: String) -> void:
+	print("Timer expired unstopped! Grade: ", grade)
 	
 # Called every frame. 'delta' is the elapsed time since the previous frame.
 func _process(delta: float) -> void:

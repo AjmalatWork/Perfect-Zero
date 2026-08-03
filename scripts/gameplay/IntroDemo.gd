@@ -148,6 +148,16 @@ func _run(on_ready: Callable) -> void:
 	# "wait for the true stop" lesson.
 	slot.mouse_filter = Control.MOUSE_FILTER_STOP
 
+	# TimerSlot._process keeps running even at a dead-stopped current_time (it
+	# has to, while the settle tween above is still moving that value) - left
+	# on past this point, it plays a tick every second at its most urgent pitch
+	# (progress clamps to 1.0 once current_time hits 0.0) for as long as the
+	# player takes to click, which is the least appropriate moment in the game
+	# for an escalating urgency cue. Nothing left in TimerSlot needs its
+	# _process once it's settled and waiting - the click is handled by
+	# _gui_input, not _process.
+	slot.set_process(false)
+
 	_wait_slot = slot
 	EventBus.timer_stopped.connect(_on_demo_slot_stopped)
 
@@ -166,6 +176,13 @@ func _finish() -> void:
 	if _dismissed:
 		return
 	_dismissed = true
+	# _on_demo_slot_stopped() already disconnects itself once the real click
+	# lands, but a skip-tap on the dim veil reaches _finish() directly and
+	# never goes through that path - without this, the connection outlives the
+	# demo for the rest of the session and _on_demo_slot_stopped() runs (and
+	# no-ops via its source check) on every future stop in the game.
+	if EventBus.timer_stopped.is_connected(_on_demo_slot_stopped):
+		EventBus.timer_stopped.disconnect(_on_demo_slot_stopped)
 	SaveManager.save_high_score("seen_intro_demo", 1)
 	# The demo just taught NORMAL directly - skip the redundant "NEW TIMER"
 	# popup TutorialManager would otherwise show for it immediately after.

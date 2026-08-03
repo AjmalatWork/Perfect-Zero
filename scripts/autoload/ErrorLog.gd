@@ -25,9 +25,16 @@ const MAX_BYTES := 64 * 1024
 
 # Identical messages are extremely likely here (a failing write retried on
 # every save, a malformed save re-read on every load), and writing a line per
-# occurrence is exactly how a log fills a disk. Consecutive repeats are
+# occurrence is exactly how a log fills a disk. Recently-seen repeats are
 # collapsed - including the push_warning, which is just as noisy in a console.
-var _last_entry: String = ""
+#
+# A small recent-history list rather than a single "last entry" string, so two
+# faults that happen to alternate (a failing read and a failing write, say)
+# each still get collapsed once seen, instead of defeating the guard by taking
+# turns. Bounded so an unbounded variety of distinct faults can't grow this
+# without limit - it's still a breadcrumb trail, not telemetry.
+const RECENT_LIMIT := 8
+var _recent: Array[String] = []
 
 func _notification(what: int) -> void:
 	# Best-effort and platform-dependent, but when it does arrive it's the only
@@ -39,16 +46,22 @@ func _notification(what: int) -> void:
 # entries can be scanned without parsing prose.
 func report(context: String, message: String) -> void:
 	var entry := "[%s] %s" % [context, message]
-	if entry == _last_entry:
+	if _recent.has(entry):
 		return
-	_last_entry = entry
+	_recent.append(entry)
+	if _recent.size() > RECENT_LIMIT:
+		_recent.pop_front()
 	push_warning(entry)
 	_append("%s  %s" % [Time.get_datetime_string_from_system(), entry])
 
 func _append(line: String) -> void:
-	# READ_WRITE rather than WRITE: WRITE truncates, and it still creates the
-	# file when missing, so this is the append path.
+	# WRITE_READ creates the file if it's missing (READ_WRITE does not - it
+	# fails outright on a first-ever write, which is why this log never wrote
+	# anything before this fix). Once the file exists, READ_WRITE opens it
+	# without truncating, which is what the append below needs.
 	var file := FileAccess.open(LOG_PATH, FileAccess.READ_WRITE)
+	if file == null:
+		file = FileAccess.open(LOG_PATH, FileAccess.WRITE_READ)
 	if file == null:
 		return  # the log itself is best-effort - never escalate a logging failure
 	if file.get_length() > MAX_BYTES:

@@ -375,10 +375,10 @@ func _on_shield_expired() -> void:
 # rather than the game silently swapping which grade's feedback plays - the
 # interruption is what sells the save.
 #
-# Both fail paths (clicked and expired) converge here. _on_timer_expired stands
-# down when a catch is pending, since timer_expired fires before Endless offers
-# the grade to Shield - without that, an expired catch would run the full harsh
-# reaction on top of this one.
+# Both fail paths (clicked and expired) converge here, and this owns the whole
+# beat for either: _on_timer_stopped/_on_timer_expired both see the already-
+# downgraded MISS grade and so run no FAIL reaction of their own, rather than
+# racing this one and having to be told to stand down.
 func shield_interrupt(origin_global: Vector2) -> void:
 	_build_powerup_overlays()
 
@@ -702,8 +702,20 @@ func _on_timer_stopped(_source: Node, grade: String, _type: int, _distance: floa
 	match grade:
 		"PERFECT":
 			hit_stop()
-			# Our handler runs before StageController/EndlessRunner update the
-			# streak, so punch off the prospective value rather than the stale one.
+			# ORDERING CONTRACT: this handler must run BEFORE StageController /
+			# EndlessRunner update the streak, which is why it punches off the
+			# prospective value (_streak + 1) rather than the current one.
+			#
+			# That holds because EventBus listeners fire in connection order and
+			# this is an autoload - autoloads are _ready() before any scene node,
+			# and EndlessRunner connects later still (in _connect_events(), at
+			# run start). If this ever runs *after* the update instead, the +1
+			# double-counts and every punch lands one tier too big; if the +1 is
+			# removed without moving the connection, every punch lands one tier
+			# too small. Change the connection order and this has to change with
+			# it. (_streak is the right source to read despite the coupling: it
+			# keeps tracking through a Nuke cascade, which this handler skips
+			# entirely, so a locally-counted alternative would go stale there.)
 			punch(_punch_mult_for_streak(_streak + 1))
 			shake(ShakeProfile.DECAY)
 		"MISS":
@@ -712,14 +724,15 @@ func _on_timer_stopped(_source: Node, grade: String, _type: int, _distance: floa
 			shake(ShakeProfile.JOLT, 1.0)
 			aberration_pulse()
 
-func _on_timer_expired(_source: Node) -> void:
+func _on_timer_expired(_source: Node, grade: String) -> void:
 	if is_gameplay_frozen():
 		return
-	# This runs *before* EndlessRunner offers the FAIL to Shield, so a
-	# full-strength reaction here would beat the interrupt to the punch and make
-	# an absorbed expiry look nothing like an absorbed click. Stand down and let
-	# shield_interrupt() own the whole beat instead.
-	if Powerups.will_absorb_fail():
+	# An absorbed expiry arrives here already downgraded to MISS, so the full
+	# FAIL punctuation simply doesn't apply and shield_interrupt() owns the
+	# whole beat instead. This used to have to ASK Powerups whether a catch was
+	# pending, because the signal fired before anyone had decided - see
+	# EventBus.timer_expired's own comment on why that was fragile.
+	if grade != "FAIL":
 		return
 	# An unclicked expiry is a FAIL, so it gets the same punctuation.
 	shake(ShakeProfile.JOLT, 1.0)
@@ -884,6 +897,16 @@ func _process(delta: float) -> void:
 			_aberration_rect.modulate.a = remaining / ABERRATION_MS
 
 	if _target == null or not _has_base:
+		return
+
+	# Skip the write on an idle frame (no menu screen has anything punching or
+	# shaking Main, and this runs every frame regardless of what's on screen).
+	# Checked against the pre-call state, before _punch_value()/_shake_offset()
+	# zero it out on the frame an animation actually finishes - that frame
+	# still needs to write once, to snap the transform back to rest exactly.
+	var idle := is_zero_approx(_punch_mag) and _shake_duration <= 0.0 \
+		and _target.scale == Vector2.ONE and _target.position == _base_position
+	if idle:
 		return
 
 	var punch_scale := _punch_value(now)

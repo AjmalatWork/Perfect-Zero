@@ -55,6 +55,26 @@ func _notification(what: int) -> void:
 		NOTIFICATION_WM_CLOSE_REQUEST, NOTIFICATION_PREDELETE:
 			_flush_pending()
 
+# Called by OptionsPanel's RESET PROGRESS, immediately after
+# SaveManager.clear_all(). The reset is deliberately scoped to progress (high
+# scores, unlock flags, tutorial-seen flags) and not to the player's own
+# preferences - but clear_all() has no notion of that distinction, it wipes
+# the entire save file outright. set_volume()/set_music_volume()/
+# set_reduce_intensity() already update these in-memory vars synchronously
+# (the debounce in _queue_persist only delays the DISK write, not the live
+# value), so within the current session "settings survive the reset" already
+# looked correct with no fix at all. The gap was on the player's NEXT launch:
+# with the file gone, _ready() would load_value() against defaults for every
+# one of these keys, and the settings they'd already chosen would quietly
+# revert without them ever having touched a slider again. Re-writing the
+# current values right after the wipe closes that gap, and also naturally
+# supersedes anything still sitting in a debounced write queued from just
+# before the reset.
+func persist_current_values() -> void:
+	SaveManager.save_value(KEY_VOLUME, volume)
+	SaveManager.save_value(KEY_MUSIC_VOLUME, music_volume)
+	SaveManager.save_value(KEY_REDUCE_INTENSITY, reduce_intensity)
+
 func _queue_persist(key: String, value: Variant) -> void:
 	_pending_writes[key] = value
 	if _persist_timer != null:
@@ -148,5 +168,14 @@ func _apply_bus_volume(bus_name: String, level: float) -> void:
 	var idx := AudioServer.get_bus_index(bus_name)
 	if idx < 0:
 		return
-	AudioServer.set_bus_mute(idx, level <= 0.001)
 	AudioServer.set_bus_volume_db(idx, linear_to_db(maxf(level, 0.001)))
+	if bus_name == AudioManager.BUS_MUSIC:
+		# Delegated rather than set directly here - a Help screen/bubble demo
+		# can independently be ducking this same bus (see AudioManager's own
+		# comment on refresh_music_mute()), and a bare
+		# set_bus_mute(level <= 0.001) would silently cancel that duck, or the
+		# reverse: get silently un-muted here even though the slider is at
+		# zero, the next time a duck ends.
+		AudioManager.refresh_music_mute()
+	else:
+		AudioServer.set_bus_mute(idx, level <= 0.001)

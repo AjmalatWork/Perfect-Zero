@@ -213,7 +213,10 @@ static func compute_bonus_factor(timer_type: int, stacks: int, grade: String) ->
 
 	return type_factor * stack_factor
 
-func _on_timer_expired(source: TimerSlot) -> void:
+# `grade` is ignored here: Shield is Endless-exclusive and Powerups returns the
+# grade untouched while disarmed, so an Arcade expiry is always a plain FAIL
+# and always ends the stage.
+func _on_timer_expired(source: TimerSlot, _grade: String) -> void:
 	if not active_slots.has(source):
 		return
 	if _stage_ending:

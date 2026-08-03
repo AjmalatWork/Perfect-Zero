@@ -82,7 +82,11 @@ func evaluate_stage(results: Array) -> Dictionary:
 		"steps": steps,
 		"tally": tally,
 		"final_mult": m,
-		"stage_score": int(round(tally * m)),
+		# Truncated, not rounded - matches resolve_stage()'s int(stage_tally *
+		# multiplier) below and EndlessHUD's live tally*mult projection, so
+		# Arcade and Endless bank the exact same score for the exact same
+		# recorded sequence of stops instead of differing by up to 1 point.
+		"stage_score": int(tally * m),
 	}
 
 # Commit a value to the campaign running total (the sum of per-stage bests).

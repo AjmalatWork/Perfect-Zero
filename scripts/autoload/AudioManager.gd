@@ -34,7 +34,18 @@ const POOL_SIZE := 12
 const MIN_FREQ := 20.0          # below this is inaudible rumble
 const MAX_FREQ := NYQUIST - 500.0  # stay clear of Nyquist to avoid aliasing
 const MAX_DURATION := 5.0        # hard cap so a bad arg can't allocate huge buffers
-const CACHE_LIMIT := 128         # bound cache growth for the arbitrary-arg path
+# Bounds cache growth for the arbitrary-arg path. Sized to comfortably hold a
+# full Endless run's real working set rather than to be a tight ceiling: every
+# key space here is already deliberately quantized (play_tick snaps to 10 Hz,
+# play_perfect likewise, the grade sounds step by streak index), which caps the
+# realistic total at roughly 170 distinct sounds - ~72 ticks, ~76 perfects, 20
+# across good/ok/miss, and ~20 one-shot stingers. At 128 that set did not fit,
+# so the cache thrashed continuously mid-run no matter how it evicted. The
+# buffers are small (a 0.07s tick blip is ~6KB, the longest 0.6s expire ~53KB),
+# putting the fully-resident set around 3MB - cheap enough on a phone to be
+# worth never re-synthesizing on the main thread again. LRU eviction (see
+# _store_in_cache) still backstops any unforeseen key explosion.
+const CACHE_LIMIT := 256
 
 # --- Tick ------------------------------------------------------------------
 # The tick fires once per second per running timer, so it's the sound that
@@ -110,6 +121,12 @@ const URGENCY_STALE_SEC := 2.0
 var _players: Array[AudioStreamPlayer] = []
 var _next_player_index: int = 0
 var _cache: Dictionary = {}
+# Cache keys in least-recently-used-first order, so _store_in_cache() can evict
+# just the coldest entry instead of dropping the whole table. Kept alongside
+# _cache rather than inside it because GDScript Dictionaries preserve insertion
+# order, not access order - a cache hit has to re-order explicitly, which is
+# what _touch_cache() does.
+var _cache_order: Array[String] = []
 var _tick_voice_count: int = 0
 var _tick_sample: AudioStream
 var _blackout_voice_count: int = 0
@@ -131,6 +148,43 @@ var _ambient_on: bool = false
 var _menu_music: AudioStreamPlayer
 var _menu_music_tween: Tween
 var _audio_unlocked: bool = false
+
+# --- Music bus mute ownership ------------------------------------------------
+# Two independent callers want the Music bus muted for two independent
+# reasons: HelpScreen and HelpBubble each duck it while a demo tile is
+# playing (reference-counted - two overlapping demos can legitimately duck at
+# once), and Settings mutes it outright when the player's own Music slider is
+# at zero. Those used to be three separate call sites each calling
+# AudioServer.set_bus_mute() directly with no idea the others existed, so
+# whichever wrote last won - a slider change mid-duck could silently un-mute
+# a demo that's still playing, and the reverse could leave the bus muted after
+# a duck ends if the slider had been dragged to zero in between. This autoload
+# is the single place that composes both reasons into the one mute flag.
+var _music_duck_count: int = 0
+
+func duck_music(on: bool) -> void:
+	_music_duck_count = maxi(_music_duck_count + (1 if on else -1), 0)
+	refresh_music_mute()
+
+# Unconditional reset for a caller tearing down every in-flight demo at once
+# (closing the Help screen/bubble, or leaving play mid-demo) - safer than
+# trusting every individual duck_music(true) to have a matching (false) by
+# the time the owner is torn down.
+func force_unduck_music() -> void:
+	_music_duck_count = 0
+	refresh_music_mute()
+
+func is_music_ducked() -> bool:
+	return _music_duck_count > 0
+
+# Called here whenever ducking changes, and by Settings whenever the Music
+# slider moves - so neither owner can clobber the other's reason for wanting
+# the bus muted.
+func refresh_music_mute() -> void:
+	var idx := AudioServer.get_bus_index(BUS_MUSIC)
+	if idx < 0:
+		return
+	AudioServer.set_bus_mute(idx, _music_duck_count > 0 or Settings.music_volume <= 0.001)
 
 func _ready() -> void:
 	# Only the web build has to wait for a user gesture before it may start
@@ -329,6 +383,14 @@ func _on_timer_stopped(_source: Node, grade: String, _type: int, _distance: floa
 
 	match grade:
 		"PERFECT":
+			# ORDERING CONTRACT: reads the multiplier as it stood going INTO
+			# this stop, not the one this stop produces - which is only true
+			# because this handler runs before EndlessRunner's own, and so
+			# before ScoreManager.register_result() updates it. Holds for the
+			# same reason Juice._on_timer_stopped()'s does: autoloads connect to
+			# EventBus before scene nodes, and EndlessRunner connects later
+			# still at run start. Moving this after the update would step every
+			# PERFECT's pitch up by one stop's worth of multiplier.
 			play_perfect(ScoreManager.multiplier)
 		"GOOD":
 			play_good(_live_grade_streak)
@@ -339,7 +401,13 @@ func _on_timer_stopped(_source: Node, grade: String, _type: int, _distance: floa
 		"FAIL":
 			play_expire()
 
-func _on_timer_expired(_source: Node) -> void:
+# `grade` is deliberately ignored: this plays the same expiry tone whether or
+# not a Shield absorbed the fail, which is the behaviour that was already in
+# place before the grade was available here at all. Worth revisiting as a feel
+# question - Juice now stands its visual reaction down on an absorbed expiry
+# while this still sounds the full harsh tone underneath the block sound - but
+# that is a deliberate audio change, not something to slip in silently.
+func _on_timer_expired(_source: Node, _grade: String) -> void:
 	play_expire()
 
 # --- Tick priority ---------------------------------------------------------
@@ -872,9 +940,18 @@ func _play(stream: AudioStream, pitch: float = 1.0, volume_db: float = 0.0) -> v
 
 # --- Synthesis (cached) ---------------------------------------------------
 
+# Marks a cache hit as most-recently-used. Without this the eviction order
+# below would be insertion order, not access order - i.e. FIFO, which would
+# happily evict the tick blips being played every second in favour of a
+# one-shot stinger that happened to be created later.
+func _touch_cache(key: String) -> void:
+	_cache_order.erase(key)
+	_cache_order.append(key)
+
 func _get_chord(freqs: Array, duration: float, volume: float) -> AudioStreamWAV:
 	var key := "c|%s|%.4f|%.4f" % [str(freqs), duration, volume]
 	if _cache.has(key):
+		_touch_cache(key)
 		return _cache[key]
 	var stream := _make_chord(freqs, duration, volume)
 	_store_in_cache(key, stream)
@@ -885,6 +962,7 @@ func _get_punchy(freqs: Array, duration: float, volume: float, decay: float,
 	var key := "p|%s|%.4f|%.4f|%.2f|%.2f|%.2f|%.2f" \
 		% [str(freqs), duration, volume, decay, harmonic, sweep_start, sweep_time]
 	if _cache.has(key):
+		_touch_cache(key)
 		return _cache[key]
 	var stream := _make_punchy(freqs, duration, volume, decay, harmonic, sweep_start, sweep_time)
 	_store_in_cache(key, stream)
@@ -895,6 +973,7 @@ func _get_punchy_sequence(freqs: Array, note_duration: float, volume: float,
 	var key := "ps|%s|%.4f|%.4f|%.2f|%.2f" \
 		% [str(freqs), note_duration, volume, decay, harmonic]
 	if _cache.has(key):
+		_touch_cache(key)
 		return _cache[key]
 	var stream := _make_punchy_sequence(freqs, note_duration, volume, decay, harmonic)
 	_store_in_cache(key, stream)
@@ -903,16 +982,34 @@ func _get_punchy_sequence(freqs: Array, note_duration: float, volume: float,
 func _get_arpeggio(freqs: Array, note_duration: float, volume: float) -> AudioStreamWAV:
 	var key := "a|%s|%.4f|%.4f" % [str(freqs), note_duration, volume]
 	if _cache.has(key):
+		_touch_cache(key)
 		return _cache[key]
 	var stream := _make_arpeggio(freqs, note_duration, volume)
 	_store_in_cache(key, stream)
 	return stream
 
 func _store_in_cache(key: String, stream: AudioStreamWAV) -> void:
-	# Simple bound: if the cache fills up (e.g. many distinct play_tone calls),
-	# drop everything and start over rather than leaking memory indefinitely.
-	if _cache.size() >= CACHE_LIMIT:
-		_cache.clear()
+	# LRU eviction rather than the clear-everything this used to do.
+	#
+	# The distinct-key count genuinely exceeds CACHE_LIMIT inside a single
+	# Endless run - play_tick alone spans ~72 quantized frequencies, and
+	# play_perfect another ~75 as the multiplier climbs, before the grade
+	# streak steps, nuke notes, powerup and reveal stingers are counted. So the
+	# old bound wasn't a rare safety valve, it fired routinely mid-run, and
+	# dropping the WHOLE table meant every sound afterwards re-synthesized from
+	# scratch on the main thread (_make_punchy is a per-sample loop over
+	# 44100 * duration frames). The result was a burst of stutters, a quiet
+	# stretch while the cache refilled, then another flush - and it got worse
+	# the longer the run went, since a higher multiplier keeps minting new
+	# play_perfect keys.
+	#
+	# Evicting only the least-recently-used entry keeps the hot set (the ticks
+	# and grades actually in rotation right now) resident, so a steady-state
+	# run stops re-synthesizing entirely.
+	while _cache.size() >= CACHE_LIMIT and not _cache_order.is_empty():
+		var oldest: String = _cache_order.pop_front()
+		_cache.erase(oldest)
+	_cache_order.append(key)
 	_cache[key] = stream
 
 func _make_chord(freqs: Array, duration: float, volume: float) -> AudioStreamWAV:

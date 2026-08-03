@@ -246,7 +246,16 @@ func _process(delta: float) -> void:
 	if current_time <= EXPIRE_THRESHOLD:
 		stopped = true
 		AudioManager.clear_tick_urgency(get_instance_id())
-		EventBus.timer_expired.emit(self)
+		# Shield is offered the fail HERE, at the single point the expiry
+		# actually happens, exactly as _resolve_stop() does for a mistimed
+		# click - so both fail paths run the same one filter call and every
+		# listener downstream sees the same already-final grade. This used to
+		# live in EndlessRunner._on_timer_expired(), i.e. after this emit, which
+		# forced presentation listeners to predict the outcome instead of being
+		# told it. Returns "FAIL" untouched outside an Endless run, so Arcade is
+		# unaffected.
+		var grade := Powerups.filter_grade("FAIL", global_position + size * 0.5)
+		EventBus.timer_expired.emit(self, grade)
 		_begin_post_stop_fade()
 
 # DECAY climbs away from 0.00 instead of falling toward it. Red's permanent

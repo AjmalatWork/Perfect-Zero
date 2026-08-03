@@ -150,7 +150,7 @@ func _pop_multiplier_label() -> void:
 	tween.tween_property(multiplier_label, "scale", Vector2.ONE, 0.22) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
-func _on_timer_expired(_source: Node) -> void:
+func _on_timer_expired(_source: Node, _grade: String) -> void:
 	flash_rect.color = Color(1, 0, 0, 0.4)
 	var tween := create_tween()
 	tween.tween_property(flash_rect, "color:a", 0.0, 0.4)

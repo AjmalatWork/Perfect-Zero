@@ -48,6 +48,9 @@ var _center: CenterContainer
 var _options: OptionsPanel
 var _paused: bool = false
 var _resuming: bool = false
+# Set when focus is lost mid-resume-wipe; consumed by resume() once it has
+# fully settled, to put the menu straight back up. See _on_focus_lost().
+var _repause_after_resume: bool = false
 var _menu_buttons: Array[Button] = []
 
 func _ready() -> void:
@@ -76,6 +79,16 @@ func _apply_canvas() -> void:
 	if _center != null:
 		_center.size = Layout.canvas_size
 	ScreenLayout.cover(_dim)
+	# Reflow the pause button's own footprint too, not just its position - it
+	# carries no live state (unlike _menu), so there's no risk in resizing it
+	# in place. _build_pause_icon()'s bars are re-added from scratch since
+	# their geometry (bar size/gap) was baked in at build time against the
+	# button size that was current then.
+	if _pause_button != null:
+		_pause_button.custom_minimum_size = _pause_button_size()
+		for child in _pause_button.get_children():
+			child.queue_free()
+		_build_pause_icon(_pause_button)
 	_apply_safe_area()
 
 # Top-right corner, immediately right of the Help icon - same cutout/rounded
@@ -100,6 +113,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not event.is_action_pressed("ui_cancel"):
 		return
 	if _resuming:
+		return
+	# PauseMenu comes after HelpBubble in Main.tscn, and the unhandled_input
+	# group is walked in reverse tree order - so without this guard, back/Escape
+	# always reaches this handler first and opens the pause menu on top of an
+	# already-open bubble instead of letting HelpBubble's own handler close it.
+	if help_bubble != null and help_bubble.is_open:
 		return
 	if _paused:
 		if _options.visible:
@@ -149,6 +168,16 @@ func _on_focus_lost() -> void:
 	# since the game always launches into MENU.
 	if not is_node_ready():
 		return
+	# A resume already in flight is the one case pause() cannot handle on its
+	# own: resume() holds _paused true for the whole 0.5s wipe and only clears
+	# it after the await, so pause() sees "already paused" and no-ops - and then
+	# the resume finishes and unpauses the tree anyway, leaving a live run
+	# ticking behind a window the player has already switched away from. That is
+	# precisely the loss this handler exists to prevent, so flag it instead and
+	# let resume() re-pause when it lands.
+	if _resuming:
+		_repause_after_resume = true
+		return
 	# pause() already no-ops when not in gameplay and when already paused, so
 	# focus loss on a menu screen or while paused is silently ignored.
 	pause()
@@ -195,6 +224,16 @@ func resume() -> void:
 	_resuming = false
 	_update_pause_button_visibility(GameManager.current_state)
 
+	# Focus was lost partway through the wipe above (see _on_focus_lost). The
+	# unpause had to happen first so this lands on a fully-settled state rather
+	# than trying to unwind a half-finished resume - pause() then puts the menu
+	# straight back up, which is exactly where the player should find things on
+	# returning. Cleared before the call so a re-entrant notification can't
+	# latch it on again.
+	if _repause_after_resume:
+		_repause_after_resume = false
+		pause()
+
 # Restart gets a straight-to-black screen fade rather than resume's wipe -
 # there's a whole run/stage being torn down and rebuilt underneath, not just an
 # overlay lifting off an unchanged board, so this needs a real content swap
@@ -222,6 +261,16 @@ func _on_restart() -> void:
 		b.disabled = false
 	_update_pause_button_visibility(GameManager.current_state)
 
+	# _on_focus_lost() sets this whenever _resuming is true, which covers this
+	# transition as well as resume()'s wipe - so it has to be consumed here too,
+	# or it lingers and spuriously re-pauses the next ordinary resume instead.
+	# Backgrounding mid-restart legitimately wants the same outcome as
+	# backgrounding mid-resume: the freshly-started run should be sitting paused
+	# when the player comes back, not already running.
+	if _repause_after_resume:
+		_repause_after_resume = false
+		pause()
+
 func _on_title() -> void:
 	get_tree().paused = false
 	_paused = false
@@ -236,6 +285,20 @@ func _on_title() -> void:
 func _open_options() -> void:
 	_menu.visible = false
 	_options.visible = true
+	# Hidden Controls don't re-sort (the same gotcha HelpScreen's own caption
+	# probing documented: "a screen that has never been opened is
+	# is_visible_in_tree() == false, and hidden containers do not re-sort").
+	# _options was built and had its one-time deferred _apply_canvas() fix
+	# (see OptionsPanel._ready()'s own comment on the ~350dp dead-top-margin
+	# bug) run back in PauseMenu._build(), while still visible = false - so its
+	# AUTOWRAP toggle-subtitle label never got a chance to resolve a real
+	# wrapped height against that call, and _center.size baked in against
+	# whatever degenerate minimum was still standing at that moment. Re-running
+	# _apply_canvas() now that the panel is actually visible re-does that
+	# assignment against the label's by-then-real minimum. Deferred, not
+	# direct, for the same reason OptionsPanel's own first call is: this
+	# frame's visibility flip needs its sort_children pass to run first.
+	_options.call_deferred("_apply_canvas")
 
 func _close_options() -> void:
 	_options.visible = false

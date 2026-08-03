@@ -18,6 +18,12 @@ const MUTED := Color("8b90a8")
 const BACK_ACCENT := NEON  # same cyan as the title screen's ARCADE button
 const TEXT_FILL := Color("dfe3ee")
 
+# Same fading-hairline idiom as CreditsScreen/StageResultScreen/EndlessEndScreen -
+# marks the boundary between the two timer-type groups on page 1.
+const DIVIDER_ALPHA := 0.4
+const DIVIDER_WIDTH := 900.0
+const DIVIDER_MAX_CANVAS_FRACTION := 0.78
+
 const PAGE_COUNT := 3
 
 # Portrait is a 900-wide canvas rather than 1600, so landscape type sizes leave
@@ -174,11 +180,6 @@ const RED_SETTLE_SEC := 1.5       # how long the sped-up bystanders run before e
 const BLUE_FREEZE_SEC := 1.0      # matches EndlessRunner's apply_pause(1.0) exactly
 const BLUE_SETTLE_SEC := 2.5
 
-var _demo_token: int = 0
-
-func _still_demo(token: int) -> bool:
-	return token == _demo_token
-
 # A fresh random landing point inside the real PERFECT window every time a demo
 # auto-clicks, instead of a single fixed 0.03 every run - the actual game never
 # lands on the exact same distance twice either.
@@ -209,19 +210,18 @@ var _score_token: int = 0
 # matched by exactly one _duck_music(false), placed at every exit point of
 # every demo function (both early-bail guards and natural completion), so the
 # count only reaches zero once nothing is actually still animating.
-var _duck_count: int = 0
-
+#
+# The count itself now lives on AudioManager (see its own
+# duck_music()/refresh_music_mute() comments) rather than here - HelpBubble
+# kept an identical, entirely separate count on the same physical bus, and
+# Settings' own volume-driven mute was a third independent writer, so any two
+# of the three could silently stomp each other's reason for wanting the bus
+# muted or unmuted. AudioManager is the one place all three now agree.
 func _duck_music(on: bool) -> void:
-	_duck_count = maxi(_duck_count + (1 if on else -1), 0)
-	var idx := AudioServer.get_bus_index(AudioManager.BUS_MUSIC)
-	if idx >= 0:
-		AudioServer.set_bus_mute(idx, _duck_count > 0)
+	AudioManager.duck_music(on)
 
 func _force_unduck_music() -> void:
-	_duck_count = 0
-	var idx := AudioServer.get_bus_index(AudioManager.BUS_MUSIC)
-	if idx >= 0:
-		AudioServer.set_bus_mute(idx, false)
+	AudioManager.force_unduck_music()
 
 func _s() -> float:
 	return PORTRAIT_SCALE if Layout.is_portrait() else 1.0
@@ -261,9 +261,7 @@ var _caption: Panel
 var _caption_label: Label
 var _caption_tile: HelpDemoTile
 var _caption_token: int = 0
-var _type_tiles: Array[HelpDemoTile] = []      # page 1, selectable
-var _bystander_tiles: Array[HelpDemoTile] = [] # page 1, react to Red/Blue
-var _bystander_row: HBoxContainer              # always reserved; tiles fade via set_present
+var _types_legend: TimerTypesLegend            # page 1, shared with HelpBubble
 var _powerup_tiles: Array[HelpDemoTile] = []   # page 2, react to the three powerups
 var _powerup_buttons: Array[Button] = []
 var _grade_buttons: Array[Button] = []
@@ -282,7 +280,7 @@ func _ready() -> void:
 # kept running (and appearing) on top of whatever screen the player navigated
 # to. Every tile's idle() bumps its own _play_token, which is what actually
 # halts an in-flight play_countdown()/play_decay_climb()/play_blur() loop -
-# bumping HelpScreen's own _demo_token alone wouldn't reach into the tile-level
+# bumping a page's own demo token alone wouldn't reach into the tile-level
 # coroutines those loops are driving.
 func _on_game_state_changed(new_state: int) -> void:
 	if new_state == GameManager.GameState.HELP:
@@ -302,18 +300,12 @@ func _on_game_state_changed(new_state: int) -> void:
 # (state_changed, below) and tapping anywhere on it mid-demo (_end_drag()),
 # since both need exactly the same reset.
 func _cancel_all_demos() -> void:
-	_demo_token += 1
 	_powerup_demo_token += 1
 	_score_token += 1
 	_force_unduck_music()
 	AudioManager.stop_all_sfx()
-	for t in _type_tiles:
-		if is_instance_valid(t):
-			t.idle()
-	for b in _bystander_tiles:
-		if is_instance_valid(b):
-			b.idle()
-			b.set_present(false)
+	if _types_legend != null:
+		_types_legend.cancel_demos()
 	for p in _powerup_tiles:
 		if is_instance_valid(p):
 			p.idle()
@@ -322,7 +314,6 @@ func _cancel_all_demos() -> void:
 		_score_tile.idle()
 		_score_tile.set_present(false)
 	_hide_caption()
-	_undim_page1()
 	_undim_powerup_buttons()
 
 # A plain resize is a re-measure; an orientation change rebuilds, because the
@@ -359,9 +350,7 @@ func _rebuild() -> void:
 	_caption = null
 	_caption_label = null
 	_caption_tile = null
-	_type_tiles.clear()
-	_bystander_tiles.clear()
-	_bystander_row = null
+	_types_legend = null
 	_powerup_tiles.clear()
 	_powerup_buttons.clear()
 	_grade_buttons.clear()
@@ -410,6 +399,17 @@ func _build() -> void:
 	_page_area = Control.new()
 	_page_area.clip_contents = true
 	_page_area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Vertical expand too - previously _page_area only ever grew to its
+	# custom_minimum_size (the tallest page's measured content), so `outer`
+	# centered that fixed-height block as one unit inside whatever taller space
+	# the dynamic-height portrait canvas (Layout._compute_portrait_size)
+	# actually provided - on a device taller than the 9:16 this screen was
+	# originally measured against, that surplus became dead margin above the
+	# title and below BACK instead of space inside the content. Expanding lets
+	# _page_area claim all of it, so it's the pages' own layout (a group-gap
+	# divider on page 1, ALIGNMENT_CENTER on pages 2/3) that decides where it
+	# goes instead of it landing outside the content block by default.
+	_page_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_page_area.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	outer.add_child(_page_area)
 
@@ -710,8 +710,9 @@ func _position_caption() -> void:
 	# so they are the only ones that take this flip.
 	var y: float = bottom + gap
 	var blocked: bool = y + h > area.size.y
-	if not blocked and _bystander_row != null and _bystander_row.is_visible_in_tree():
-		var brect := _bystander_row.get_global_rect()
+	var bystander_row: HBoxContainer = _types_legend._bystander_row if _types_legend != null else null
+	if not blocked and bystander_row != null and bystander_row.is_visible_in_tree():
+		var brect := bystander_row.get_global_rect()
 		var b_top: float = brect.position.y - area.position.y
 		blocked = y < b_top + brect.size.y and y + h > b_top
 	if blocked:
@@ -738,311 +739,37 @@ func _hide_caption() -> void:
 		_caption.modulate.a = 0.0
 
 # --- Page 1: timer types ------------------------------------------------------
+# Built from TimerTypesLegend, the shared component the in-game HelpBubble's
+# Timer Types page also uses - see that file for why (two hand-kept-in-sync
+# copies of this had already drifted in tile size, text size, spacing and
+# bystander size before this extraction).
 
 func _build_page_types() -> Control:
-	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", _fs(12))
-	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	_types_legend = TimerTypesLegend.new()
+	_types_legend.type_tapped.connect(_on_legend_type_tapped)
+	_types_legend.duck_requested.connect(_duck_music)
+	_types_legend.build()
 
-	var self_group := _build_type_group("AFFECTS ONLY ITSELF", [
-		TimerData.TimerType.NORMAL, TimerData.TimerType.GOLDEN,
-		TimerData.TimerType.BLACKOUT, TimerData.TimerType.DECAY,
-	], false)
-	var board_group := _build_type_group("AFFECTS THE WHOLE BOARD", [
-		TimerData.TimerType.RED, TimerData.TimerType.BLUE,
-	], true)
-
-	# Portrait stacks the two groups; landscape sets them side by side, which is
-	# the one place the extra width is genuinely worth using - everything else on
-	# this screen is the same shape in both orientations.
+	# Portrait binds the description to the tapped tile via the anchored
+	# overlay caption and keeps only the standing prompt in flow; landscape
+	# keeps the original in-flow label instead. The distance this fixes is a
+	# tall-phone problem - measured at ~300px there against 114 units of spare
+	# height here - and landscape sets the two groups side by side, so a
+	# full-width panel under a tile would cover the other group.
 	if Layout.is_portrait():
-		col.add_child(self_group)
-		col.add_child(board_group)
+		_types_legend.add_child(_make_prompt_label("Tap any timer to see what it does."))
 	else:
-		var row := HBoxContainer.new()
-		row.alignment = BoxContainer.ALIGNMENT_CENTER
-		row.add_theme_constant_override("separation", _fs(56))
-		row.add_child(self_group)
-		row.add_child(board_group)
-		var wrap := CenterContainer.new()
-		wrap.add_child(row)
-		col.add_child(wrap)
+		_types_legend.add_child(_make_desc_label(0, "Tap any timer to see what it does."))
+	return _types_legend
 
-	# Portrait binds the description to the tapped tile and keeps only the standing
-	# prompt in flow; landscape keeps the original in-flow label. The distance this
-	# fixes is a tall-phone problem - measured at ~300px there against 114 units of
-	# spare height here - and landscape sets the two groups side by side, so a
-	# full-width panel under a tile would cover the other group. Measured, Red and
-	# Blue also have no room above them in that layout: the flip lands at -64.
-	if Layout.is_portrait():
-		col.add_child(_make_prompt_label("Tap any timer to see what it does."))
-	else:
-		col.add_child(_make_desc_label(0, "Tap any timer to see what it does."))
-	return col
-
-# `with_bystanders` fills the lower half of the 2x2 with plain Normal timers, so
-# Red and Blue have something to visibly act on. They are the only two types
-# whose rule mentions other timers at all, which is exactly why they are the
-# only two that get them.
-func _build_type_group(heading: String, types: Array, with_bystanders: bool) -> Control:
-	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", _fs(6))
-
-	var label := Label.new()
-	label.text = heading
-	label.add_theme_font_size_override("font_size", _fs(SECTION_LABEL_SIZE))
-	label.add_theme_color_override("font_color", MUTED)
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	col.add_child(label)
-
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", _fs(12))
-	grid.add_theme_constant_override("v_separation", _fs(12))
-	for t in types:
-		var tile := _make_tile(t, TimerTypeInfo.name_of(t))
-		tile.tapped.connect(_on_type_tapped)
-		_type_tiles.append(tile)
-		grid.add_child(tile)
-
-	var wrap := CenterContainer.new()
-	wrap.add_child(grid)
-	col.add_child(wrap)
-
-	# The bystander row holds its space permanently and the tiles inside it fade
-	# via set_present() (modulate), which a Container does not treat as a size
-	# change. Collapsing the row's `visible` instead was tried and reverted: it
-	# reclaimed the idle blank space, but because this page's column is centred
-	# inside a fixed-height page area, expanding the row on every Red/Blue tap
-	# shifted every other timer on the page upward by 100 units for the duration
-	# of the demo, which was reported as looking broken. Stationary timers win.
-	#
-	# It costs no net height either way, which is the part worth knowing before
-	# anyone "reclaims" it again: _size_page_area reserves the tallest page, and
-	# that measurement has always included this row expanded. Collapsing it never
-	# shrank the reservation - it only moved the same 200 units of blank from
-	# below Red/Blue out to the page's top and bottom edges.
-	if with_bystanders:
-		_bystander_row = HBoxContainer.new()
-		_bystander_row.alignment = BoxContainer.ALIGNMENT_CENTER
-		_bystander_row.add_theme_constant_override("separation", _fs(12))
-		for i in range(2):
-			var b := _make_tile(TimerData.TimerType.NORMAL,
-				TimerTypeInfo.name_of(TimerData.TimerType.NORMAL))
-			# Bystanders are scenery, not choices - tapping one would select a
-			# second "Normal" that already has its own tile in the group above.
-			b.interactive = false
-			# Starts invisible so set_present(true) still gets to fade them in
-			# the first time the row is shown, rather than the row's own
-			# visible=true snap making them appear at full opacity instantly.
-			b.modulate.a = 0.0
-			_bystander_tiles.append(b)
-			_bystander_row.add_child(b)
-		var row_wrap := CenterContainer.new()
-		row_wrap.add_child(_bystander_row)
-		col.add_child(row_wrap)
-
-	return col
-
-# Dispatches to one scripted, complete demonstration per type - a tile no
-# longer just reacts, it plays out its entire rule end to end (spawn through
-# resolution) while every tile not involved dims out of the way. Bumping
-# _demo_token first is what lets a second tap (same tile or a different one)
-# cleanly interrupt whatever's still playing: every step below checks
-# _still_demo(token) and quietly stops touching nodes the instant it goes
-# stale, rather than needing a separate "is something running" flag that could
-# get stuck true if a sequence is ever interrupted mid-await.
-func _on_type_tapped(tile: HelpDemoTile) -> void:
-	if _swipe_active:
-		return
-	_demo_token += 1
-	var token := _demo_token
-	var text := "%s - %s" % [TimerTypeInfo.name_of(tile.timer_type),
-		TimerTypeInfo.desc_of(tile.timer_type)]
-	var accent: Color = TimerTypeInfo.color_of(tile.timer_type)
+# The legend emits this instead of showing its own description - portrait's
+# anchored overlay caption and landscape's in-flow label are real per-screen
+# differences, not something worth forcing into the shared component.
+func _on_legend_type_tapped(tile: HelpDemoTile, text: String, accent: Color) -> void:
 	if Layout.is_portrait():
 		_show_caption(tile, text, accent)
 	else:
 		_set_desc(0, text, accent)
-
-	match tile.timer_type:
-		TimerData.TimerType.NORMAL:
-			_play_normal_demo(tile, token)
-		TimerData.TimerType.GOLDEN:
-			_play_golden_demo(tile, token)
-		TimerData.TimerType.BLACKOUT:
-			_play_blackout_demo(tile, token)
-		TimerData.TimerType.DECAY:
-			_play_decay_demo(tile, token)
-		TimerData.TimerType.RED:
-			_play_red_demo(tile, token)
-		TimerData.TimerType.BLUE:
-			_play_blue_demo(tile, token)
-
-# Bystanders are deliberately left out of the dim sweep: they're either fully
-# present and already in `keep` (a Red/Blue demo always keeps them) or fully
-# absent (set_present(false)), and set_dimmed()/set_present() both animate the
-# same modulate:a - dimming an absent bystander would tween it partway toward
-# visible for no reason, and undimming one on every demo's exit would fade a
-# tile back in that was never supposed to be seen.
-func _dim_page1_except(keep: Array) -> void:
-	for t in _type_tiles:
-		t.set_dimmed(not keep.has(t))
-
-func _undim_page1() -> void:
-	for t in _type_tiles:
-		t.set_dimmed(false)
-
-# NORMAL - the baseline every other demo is read against: counts down, an
-# auto-click near 0.00 lands a PERFECT.
-func _play_normal_demo(tile: HelpDemoTile, token: int) -> void:
-	_duck_music(true)
-	_dim_page1_except([tile])
-	tile.set_selected(true)
-	var stop := _random_perfect_stop()
-	await tile.play_countdown(NORMAL_START, stop)
-	if not _still_demo(token) or not is_instance_valid(tile):
-		_duck_music(false)
-		return
-	tile.play_grade("PERFECT", "%.2f" % stop, RESULT_HOLD_SEC)
-	await get_tree().create_timer(RESULT_HOLD_SEC, true, false, true).timeout
-	_duck_music(false)
-	_end_type_demo(tile, token)
-
-# GOLDEN - never counts down on the real board either, so this shows the blur
-# for a beat, then the guaranteed "0.00" PERFECT with its real x2 bonus.
-func _play_golden_demo(tile: HelpDemoTile, token: int) -> void:
-	_duck_music(true)
-	_dim_page1_except([tile])
-	tile.set_selected(true)
-	await tile.play_blur(GOLDEN_BLUR_SEC)
-	if not _still_demo(token) or not is_instance_valid(tile):
-		_duck_music(false)
-		return
-	tile.play_grade("PERFECT", "0.00", RESULT_HOLD_SEC, "x2")
-	await get_tree().create_timer(RESULT_HOLD_SEC, true, false, true).timeout
-	_duck_music(false)
-	_end_type_demo(tile, token)
-
-# BLACKOUT - counts down visibly, blanks to the real "??.??" once inside
-# blackout_duration (1.5s), keeps draining unseen, then reveals the true value
-# the instant it resolves - exactly what the real slot does on stop - with its
-# real x2.5 bonus (the highest of any type, per StageController.compute_bonus_factor).
-func _play_blackout_demo(tile: HelpDemoTile, token: int) -> void:
-	_duck_music(true)
-	_dim_page1_except([tile])
-	tile.set_selected(true)
-	var stop := _random_perfect_stop()
-	await tile.play_countdown(BLACKOUT_START, stop, BLACKOUT_THRESHOLD)
-	if not _still_demo(token) or not is_instance_valid(tile):
-		_duck_music(false)
-		return
-	tile.play_grade("PERFECT", "%.2f" % stop, RESULT_HOLD_SEC, "x2.5")
-	await get_tree().create_timer(RESULT_HOLD_SEC, true, false, true).timeout
-	_duck_music(false)
-	_end_type_demo(tile, token)
-
-# DECAY - counts UP from 0.00, stepping through the same four tier colours the
-# real board uses, and auto-resolves as MISS at its ceiling. Never FAIL - a
-# locked-in rule (Decay can't cost a life), not an oversight.
-func _play_decay_demo(tile: HelpDemoTile, token: int) -> void:
-	_duck_music(true)
-	_dim_page1_except([tile])
-	tile.set_selected(true)
-	await tile.play_decay_climb(DECAY_PERFECT_END, DECAY_GOOD_END, DECAY_OKAY_END, DECAY_MISS_END)
-	if not _still_demo(token) or not is_instance_valid(tile):
-		_duck_music(false)
-		return
-	tile.play_grade("MISS", "%.2f" % DECAY_MISS_END, RESULT_HOLD_SEC)
-	await get_tree().create_timer(RESULT_HOLD_SEC, true, false, true).timeout
-	_duck_music(false)
-	_end_type_demo(tile, token)
-
-# RED - the two bystanders are already running when Red resolves, so cause and
-# effect read in order: Red stops, THEN they visibly react. The reaction is
-# permanent (matches TimerSlot.apply_speedup - it never reverts), so they run
-# the rest of the demo faster and each closes out with the real x1.25 bonus a
-# Red-boosted stop actually earns.
-func _play_red_demo(tile: HelpDemoTile, token: int) -> void:
-	_duck_music(true)
-	var keep: Array = [tile] + _bystander_tiles
-	_dim_page1_except(keep)
-	tile.set_selected(true)
-	for b in _bystander_tiles:
-		b.set_present(true)
-	for i in range(_bystander_tiles.size()):
-		_run_bystander_speedup(_bystander_tiles[i], BYSTANDER_STARTS[i], token)
-	await tile.play_countdown(REACT_TILE_START, _random_perfect_stop())
-	if not _still_demo(token) or not is_instance_valid(tile):
-		_duck_music(false)
-		return
-	tile.play_grade("PERFECT", "%.2f" % tile.value, RESULT_HOLD_SEC)
-	for b in _bystander_tiles:
-		if is_instance_valid(b):
-			b.react_speedup_permanent()
-	await get_tree().create_timer(RED_SETTLE_SEC, true, false, true).timeout
-	_duck_music(false)
-	_end_type_demo(tile, token, keep)
-
-func _run_bystander_speedup(b: HelpDemoTile, start: float, token: int) -> void:
-	await b.play_countdown(start, _random_perfect_stop())
-	if not _still_demo(token) or not is_instance_valid(b):
-		return
-	b.play_grade("PERFECT", "%.2f" % b.value, RESULT_HOLD_SEC, "x1.25")
-
-# BLUE - same bystander setup as Red, but the reaction has to look undone, not
-# permanent: a full 1.0s freeze (matches EndlessRunner's apply_pause(1.0)
-# exactly), then a normal-speed resume with no bonus, since Blue only pauses,
-# it never boosts.
-func _play_blue_demo(tile: HelpDemoTile, token: int) -> void:
-	_duck_music(true)
-	var keep: Array = [tile] + _bystander_tiles
-	_dim_page1_except(keep)
-	tile.set_selected(true)
-	for b in _bystander_tiles:
-		b.set_present(true)
-	for i in range(_bystander_tiles.size()):
-		_run_bystander_plain(_bystander_tiles[i], BYSTANDER_STARTS[i], token)
-	await tile.play_countdown(REACT_TILE_START, _random_perfect_stop())
-	if not _still_demo(token) or not is_instance_valid(tile):
-		_duck_music(false)
-		return
-	tile.play_grade("PERFECT", "%.2f" % tile.value, RESULT_HOLD_SEC)
-	for b in _bystander_tiles:
-		if is_instance_valid(b):
-			b.react_freeze(BLUE_FREEZE_SEC)
-	await get_tree().create_timer(BLUE_SETTLE_SEC, true, false, true).timeout
-	_duck_music(false)
-	_end_type_demo(tile, token, keep)
-
-func _run_bystander_plain(b: HelpDemoTile, start: float, token: int) -> void:
-	await b.play_countdown(start, _random_perfect_stop())
-	if not _still_demo(token) or not is_instance_valid(b):
-		return
-	b.play_grade("PERFECT", "%.2f" % b.value, RESULT_HOLD_SEC)
-
-# Shared close: holds the resolved state a beat, then fades every dimmed tile
-# back and resets whichever tiles this sequence actually drove. `also` covers
-# the bystanders on a Red/Blue demo - Normal/Golden/Blackout/Decay only ever
-# touch the tapped tile itself.
-func _end_type_demo(tile: HelpDemoTile, token: int, also: Array = []) -> void:
-	if not _still_demo(token) or not is_instance_valid(tile):
-		return
-	tile.set_selected(false)
-	await get_tree().create_timer(0.3, true, false, true).timeout
-	if not _still_demo(token):
-		return
-	_undim_page1()
-	tile.idle()
-	for t in also:
-		if t != tile and is_instance_valid(t):
-			t.idle()
-			# Bystanders only exist for the demo that just finished (see
-			# _play_red_demo/_play_blue_demo) - back to absent, not just idle.
-			# Their row holds its space either way, so this is a fade and not a
-			# layout change: nothing else on the page moves when they go.
-			if _bystander_tiles.has(t):
-				t.set_present(false)
 
 # --- Page 2: powerups ---------------------------------------------------------
 
@@ -1480,6 +1207,38 @@ func _box(accent: Color, darken: float) -> StyleBoxFlat:
 	sb.set_content_margin_all(10)
 	return sb
 
+# Same fading hairline every overhauled screen uses (Credits/StageResult/
+# EndlessEnd) - centre-bright, transparent at both ends, reads as a change of
+# subject rather than a ruled-off table row. CenterContainer ignores a child's
+# own size flags and centers it at its minimum size, so this stays a fixed
+# _divider_width() wide even inside an expanding vertical gap.
+func _make_divider() -> TextureRect:
+	var grad := Gradient.new()
+	grad.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
+	grad.colors = PackedColorArray([
+		Color(1, 1, 1, 0.0),
+		Color(1, 1, 1, 1.0),
+		Color(1, 1, 1, 0.0),
+	])
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill_from = Vector2(0.0, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	tex.width = 256
+	tex.height = 1
+
+	var rect := TextureRect.new()
+	rect.texture = tex
+	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	rect.stretch_mode = TextureRect.STRETCH_SCALE
+	rect.custom_minimum_size = Vector2(_divider_width(), 2.0)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rect.modulate = Color(MUTED.r, MUTED.g, MUTED.b, DIVIDER_ALPHA)
+	return rect
+
+func _divider_width() -> float:
+	return minf(DIVIDER_WIDTH, Layout.canvas_size.x * DIVIDER_MAX_CANVAS_FRACTION)
+
 # --- Paging + swipe -----------------------------------------------------------
 
 func _size_page_area() -> void:
@@ -1565,6 +1324,8 @@ func _begin_drag(pos: Vector2) -> void:
 	_drag_from = pos
 	_dragging = true
 	_swipe_active = false
+	if _types_legend != null:
+		_types_legend.block_taps = false
 
 func _update_drag(pos: Vector2) -> void:
 	if not _dragging:
@@ -1577,6 +1338,8 @@ func _update_drag(pos: Vector2) -> void:
 			# through the drag would have it sitting still over moving content.
 			_hide_caption()
 		_swipe_active = true
+		if _types_legend != null:
+			_types_legend.block_taps = true
 	if _swipe_active:
 		if _track_tween != null and _track_tween.is_valid():
 			_track_tween.kill()

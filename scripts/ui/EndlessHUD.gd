@@ -34,6 +34,7 @@ var _equation: Label
 var _total: Label
 var _streak_popup: Label
 var _streak_tween: Tween
+var _milestone_tween: Tween
 var _crosses_row: HBoxContainer
 var _cross_labels: Array = []
 var _last_mult: float = 1.0
@@ -50,7 +51,33 @@ var _streak_counter: Label
 var _target_best: int = 0
 var _overtake_fired: bool = false
 var _milestone_label: Label
-const MILESTONE_VALUES := [1000, 5000, 10000]
+
+# Fixed anchors for the early run - untouched by the geometric scaling below,
+# so a returning player's first three stingers land exactly where they always
+# have.
+const MILESTONE_BASE: Array[int] = [1000, 5000, 10000]
+
+# GDD §7 left "do thresholds repeat/scale past 10000, or stop at three" as an
+# open design question - answered: scale geometrically rather than stop, so a
+# strong run keeps getting stingers instead of going quiet for good past the
+# ten-minute mark. Repeating x2.5/x2/x2 multiplies by exactly 10 every three
+# steps, which keeps every generated value a round number (10k -> 25k -> 50k
+# -> 100k -> 250k -> ...) while averaging out to roughly doubling per step -
+# in the same spirit as the score curve's own compounding multiplier, rather
+# than a flat +N that would matter less and less as scores grow.
+#
+# These are a placeholder, not a measured curve: there was no real Hardcore
+# score data available to calibrate against when this was written, so the
+# ratios were picked by feel. Retune this array first if playtesting shows the
+# late thresholds landing too close together (numbing) or too far apart
+# (silent for too long) - nothing else here needs to change to retune it.
+const GEOMETRIC_STEP := [2.5, 2.0, 2.0]
+
+# Grows past MILESTONE_BASE on demand as a run's score climbs past the last
+# generated value - see _check_milestones(). Reset to a fresh copy of
+# MILESTONE_BASE by set_target() at the start of every run.
+var _milestone_values: Array[int] = MILESTONE_BASE.duplicate()
+var _milestone_step_index: int = 0
 var _milestones_fired: Dictionary = {}
 
 # Fail-cross row. Bumped in portrait to fit the bigger crosses (see
@@ -253,6 +280,12 @@ func set_target(best: int) -> void:
 	_target_best = best
 	_overtake_fired = false
 	_milestones_fired.clear()
+	# A retry (or "play again") reuses this HUD instance, so the generated tail
+	# from a previous long run has to be dropped along with the fired set -
+	# otherwise a short retry would inherit a list that already runs into the
+	# hundreds of thousands from the run before it.
+	_milestone_values = MILESTONE_BASE.duplicate()
+	_milestone_step_index = 0
 
 # Fires once, the instant live score first crosses the record it's chasing.
 # Score can dip back below via a later miss (multiplier resets, not the banked
@@ -278,21 +311,45 @@ func _show_overtake_pulse() -> void:
 		tween.tween_property(label, "modulate", Color.WHITE, 0.5)
 
 func _check_milestones(total: int) -> void:
-	for m in MILESTONE_VALUES:
+	# Extended on demand, one GEOMETRIC_STEP at a time, rather than precomputed
+	# out to some arbitrary cap - a run has no fixed ceiling, so neither can
+	# this list. The loop terminates because every step multiplies by > 1.
+	while total >= _milestone_values[-1]:
+		var step: float = GEOMETRIC_STEP[_milestone_step_index % GEOMETRIC_STEP.size()]
+		_milestone_step_index += 1
+		_milestone_values.append(int(round(_milestone_values[-1] * step)))
+
+	# A single stop (an Overclocked Nuke, say) can cross more than one
+	# threshold in the same frame. Mark every one of them fired - each still
+	# only ever fires once per run - but show only the highest: it's strictly
+	# better information than the lower one it subsumes, and showing both
+	# meant the second call overwrote the first's text on the same label mid-
+	# tween, so only the higher number was ever actually seen anyway.
+	var highest := -1
+	for m in _milestone_values:
 		if total >= m and not _milestones_fired.has(m):
 			_milestones_fired[m] = true
-			_show_milestone(m)
+			highest = m
+	if highest >= 0:
+		_show_milestone(highest)
 
 func _show_milestone(value: int) -> void:
+	# Two thresholds landing on the same frame both call this with the tween
+	# from the previous call still running (same fix _show_streak_popup below
+	# already applies to its own tween) - without killing it here, the two
+	# tweens fight over modulate:a and the label can be left stuck faded out.
+	if _milestone_tween != null and _milestone_tween.is_valid():
+		_milestone_tween.kill()
+
 	_milestone_label.text = "%d!" % value
 	_milestone_label.pivot_offset = _milestone_label.size * 0.5
 	_milestone_label.modulate.a = 1.0
 	_milestone_label.scale = Vector2(1.3, 1.3)
-	var tween := create_tween()
-	tween.set_parallel(true)
-	tween.tween_property(_milestone_label, "scale", Vector2.ONE, 0.18) \
+	_milestone_tween = create_tween()
+	_milestone_tween.set_parallel(true)
+	_milestone_tween.tween_property(_milestone_label, "scale", Vector2.ONE, 0.18) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	tween.tween_property(_milestone_label, "modulate:a", 0.0, 0.7).set_delay(0.7)
+	_milestone_tween.tween_property(_milestone_label, "modulate:a", 0.0, 0.7).set_delay(0.7)
 
 func _on_streak_changed(count: int) -> void:
 	# Celebrate a growing streak (2+); don't announce it breaking.

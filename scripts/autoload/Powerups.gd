@@ -123,6 +123,30 @@ func button_origin(kind: int) -> Vector2:
 
 var _armed: bool = false      # only true during an Endless run
 
+# --- Input suspension -------------------------------------------------------
+# Deliberately NOT the same thing as Juice's gameplay freeze, and the
+# distinction is load-bearing. Juice.freeze_gameplay() means "an animation has
+# visually stopped the board, so no clock may advance behind it" - and a Nuke
+# fired *during* another Nuke's cascade is explicitly allowed (GDD 11), so
+# gating activation on is_gameplay_frozen() would break a documented rule.
+#
+# This means something narrower: "a modal overlay owns the screen, so the
+# player is not currently playing at all." The in-game Help bubble is the only
+# thing that sets it. Its dim already blocks mouse/touch from reaching the
+# powerup buttons, but the tree is NOT paused (the bubble freezes clocks
+# instead), so PowerupBar's A/S/D keyboard handler stayed live underneath it -
+# pressing S while reading the Help panel fired a real Nuke that resolved and
+# banked the whole board behind the overlay, and D banked a full-length
+# Overclock window that couldn't drain while frozen. Desktop/web only, since
+# touch builds have no keyboard, but both are shipping platforms.
+var _input_suspended: bool = false
+
+func set_input_suspended(suspended: bool) -> void:
+	_input_suspended = suspended
+
+func is_input_suspended() -> bool:
+	return _input_suspended
+
 var shield_window_left: float = 0.0
 var shield_cd_left: float = 0.0
 var clear_cd_left: float = 0.0
@@ -170,6 +194,11 @@ func _arm() -> void:
 	clear_cd_left = initial
 	overclock_cd_left = initial
 	_armed = true
+	# Belt-and-braces against a stuck flag outliving the overlay that set it
+	# (quitting to Title mid-bubble, say). HelpBubble clears it on both its own
+	# close path and its leaving-play reset, so this should already be false -
+	# but a fresh run must never start with input silently dead.
+	_input_suspended = false
 
 # Countdowns run on unscaled time so a PERFECT's hit-stop (which dips
 # Engine.time_scale to 0.05) can't stretch a cooldown. The node stays
@@ -241,6 +270,14 @@ func can_activate(kind: int) -> bool:
 	return false
 
 func activate(kind: int) -> bool:
+	# Checked here rather than in can_activate() above: the powerup genuinely
+	# IS charged while a modal overlay is up, and can_activate() is what paints
+	# the button's charged/ready state and drives its came-off-cooldown pulse.
+	# Folding suspension into that would make the button lie about its charge
+	# and re-fire the pulse on every overlay close. It's the commit that must
+	# not land, not the charge that should read as spent.
+	if _input_suspended:
+		return false
 	if not can_activate(kind):
 		return false
 
@@ -272,21 +309,23 @@ func activate(kind: int) -> bool:
 # --- Effects --------------------------------------------------------------
 
 # Shield's only job: the first FAIL anywhere on the board inside the window
-# becomes a MISS, and the window shuts immediately at that point. Called by
-# TimerSlot before it flashes or emits, so the downgrade is what the player
-# actually sees.
+# becomes a MISS, and the window shuts immediately at that point.
+#
+# Called by TimerSlot on BOTH fail paths - from _resolve_stop() for a mistimed
+# click, and at the expiry check for a timer that ran out the clock - always
+# before that slot flashes or emits anything, so the downgrade is what the
+# player actually sees and every listener downstream receives one final grade.
+# There is deliberately exactly one call per fail; a second call would consume
+# a second Shield window for the same event.
+#
+# (This used to be paired with a `will_absorb_fail()` predicate, which existed
+# solely so Juice could guess the outcome of an expiry it was notified about
+# before anyone had decided it. EventBus.timer_expired now carries the resolved
+# grade instead, so there is nothing left to predict and the predicate is gone.)
 #
 # `origin_global` is where the caught FAIL happened - the interrupt animation
 # needs it so the absorbed burst visibly travels from the offending timer to the
 # shield boundary rather than appearing from nowhere.
-# True when a FAIL arriving right now would be caught. Juice consults this on
-# expiry because it reacts to timer_expired, which fires *before* EndlessRunner
-# gets a chance to offer the FAIL to filter_grade() - without this it would run
-# a full-strength FAIL reaction for a fail that is about to be absorbed, and the
-# expired catch would look nothing like the clicked one.
-func will_absorb_fail() -> bool:
-	return _armed and shield_window_left > 0.0
-
 func filter_grade(grade: String, origin_global: Vector2 = Vector2.ZERO) -> String:
 	if not _armed or grade != "FAIL" or shield_window_left <= 0.0:
 		return grade

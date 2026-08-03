@@ -102,6 +102,20 @@ var _time_since_spawn: float = 0.0
 var _time_since_colored: float = 0.0
 var _running: bool = false
 
+# Monotonic "which run is this" counter, bumped by start_run() and by both
+# teardown paths. Long-lived coroutines capture it and re-check it at every
+# await boundary, so work belonging to a run that has since ended can bail
+# instead of acting on the run that replaced it.
+#
+# `_running` alone is NOT sufficient for this, which is the whole reason this
+# exists: a pause-menu RESTART sets _running back to true, so a cascade that
+# suspended mid-pause resumes to find its own bail guard satisfied and carries
+# on into a run that isn't its own. See _run_nuke_cascade().
+var _run_generation: int = 0
+
+func _is_current_run(generation: int) -> bool:
+	return _running and generation == _run_generation
+
 const LIFE_LOSS_BEAT := 0.18  # gap after the FAIL's own feedback before the life reaction
 # Long enough for the life-loss reaction above (which fires at LIFE_LOSS_BEAT and
 # whose punch/flash run ~0.3s past that) to finish before the run-over dim starts.
@@ -139,6 +153,11 @@ func start_run(lives: int) -> void:
 	# a run restarted while Shield/Overclock was active doesn't hand that
 	# overlay's live animation to the fresh run.
 	Juice.reset_run_effects()
+	# Bumped before anything else here: any coroutine still suspended from the
+	# previous run (a Nuke cascade caught mid-pause by a RESTART, above all)
+	# must see a generation that no longer matches the instant it resumes,
+	# rather than finding _running true again and continuing into this run.
+	_run_generation += 1
 	max_lives = lives
 	_build_grid()
 	_apply_board_metrics()
@@ -299,14 +318,22 @@ func _pick_value(type: int) -> float:
 
 	# Avoid spawning a timer whose zero-moment lands within min_zero_gap of a
 	# timer already running, so the player is never forced to click two at once.
+	# _active_zero_times() reports real-seconds-from-now (already divided by
+	# Overclock's speed scale), but `best`/`candidate` here are raw, unscaled
+	# start_time values - a fresh timer spawns at speed_multiplier 1.0, so its
+	# own real time-to-zero is start_value / scale too. Comparing a raw value
+	# against a scaled one understated every gap by the same factor Overclock
+	# is boosting by (1.5x), so the guarantee silently weakened exactly during
+	# the busiest, highest-stakes window.
 	var occupied := _active_zero_times()
+	var scale: float = maxf(Powerups.timer_speed_scale(), 0.0001)
 	var best := randf_range(lo, hi)
-	var best_gap := _min_gap(best, occupied)
+	var best_gap := _min_gap(best / scale, occupied)
 	for i in range(VALUE_PICK_ATTEMPTS - 1):
 		if best_gap >= min_zero_gap:
 			break
 		var candidate := randf_range(lo, hi)
-		var gap := _min_gap(candidate, occupied)
+		var gap := _min_gap(candidate / scale, occupied)
 		if gap > best_gap:
 			best = candidate
 			best_gap = gap
@@ -346,6 +373,16 @@ func _pick_type() -> int:
 		var forced := _pick_colored_type()
 		if forced != -1:
 			return forced
+		# -1 here is a reachable, expected outcome - not an impossible edge
+		# case - when every unlocked coloured type is already at its
+		# concurrent cap. Deliberately not overridden: the caps exist because
+		# two Blues or two Blackouts on the board at once is genuinely unfair,
+		# and that's a tighter constraint than the pity timer's "don't go too
+		# long without a coloured spawn" guarantee. Falling through to the
+		# ordinary weighted draw below just means this stretch stays mostly
+		# Normal a little longer; _time_since_colored keeps growing regardless,
+		# so the forced pick retries on every subsequent spawn and fires the
+		# instant a capped type frees up - it cannot stall out.
 
 	var pool: Array[TimerUnlock] = []
 	var total := 0.0
@@ -501,17 +538,18 @@ func _on_timer_stopped(source: TimerSlot, grade: String, type: int, distance: fl
 		_dispatch_reaction(source, type)
 	_free_cell_after_delay(idx, source)
 
-func _on_timer_expired(source: TimerSlot) -> void:
+func _on_timer_expired(source: TimerSlot, grade: String) -> void:
 	if not _running:
 		return
 	var idx := grid_slots.find(source)
 	if idx == -1:
 		return
 
-	# An expiry never passes through TimerSlot's grading, so Shield has to be
-	# offered the FAIL here too - otherwise it would only ever catch a mistimed
-	# *click*, and miss the far more common "ran out the clock" fail.
-	var grade := Powerups.filter_grade("FAIL", _slot_centre(source))
+	# `grade` arrives already filtered - TimerSlot offers the fail to Shield at
+	# the moment of expiry now, so both fail paths (a mistimed click and running
+	# out the clock) route through exactly one filter_grade() call at the same
+	# point in their lifecycle. Filtering again here would consume a second
+	# Shield window.
 	ScoreManager.register_result(grade, 1.0)  # distance irrelevant - neither grade scores
 	if grade == "FAIL":
 		_handle_fail()
@@ -576,8 +614,18 @@ func _free_cell_after_delay(idx: int, slot: TimerSlot) -> void:
 	# stretch this. Waiting for the real signal - rather than a flat timer here
 	# - is what makes the cell only count as empty once the timer has actually
 	# finished disappearing, not the instant it's clicked.
+	#
+	# Polled rather than a bare `await slot.faded_out`: _clear_cells() (a fresh
+	# run, an abort, a restart) frees every slot directly without ever emitting
+	# faded_out, which would otherwise leave this coroutine suspended forever -
+	# each abandoned instance is a small permanent leak that accumulates across
+	# rapid restarts. is_instance_valid(slot) going false breaks the wait.
 	if is_instance_valid(slot):
-		await slot.faded_out
+		var faded := false
+		var mark_faded := func() -> void: faded = true
+		slot.faded_out.connect(mark_faded, CONNECT_ONE_SHOT)
+		while not faded and is_instance_valid(slot):
+			await get_tree().process_frame
 	if idx >= 0 and idx < GRID_CELLS and grid_slots[idx] == slot:
 		grid_slots[idx] = null
 	if is_instance_valid(slot):
@@ -588,8 +636,14 @@ func _free_cell_after_delay(idx: int, slot: TimerSlot) -> void:
 # Abandon the current run without saving/ending (e.g. quitting to Title from pause).
 func abort_run() -> void:
 	_running = false
+	_run_generation += 1
 	_disconnect_events()
 	_clear_cells()
+	# ScoreManager.multiplier_cap is singleton state this run set in
+	# start_run() and nothing else clears - left capped, it would leak into
+	# any Arcade stage reached without passing back through
+	# CampaignNavigator.enter_campaign() (every NEXT STAGE and every RETRY).
+	ScoreManager.multiplier_cap = -1.0
 
 # The stillness beat between the last life going and the summary appearing.
 #
@@ -625,8 +679,12 @@ func _begin_run_over() -> void:
 
 func _end_run() -> void:
 	_running = false
+	_run_generation += 1
 	_disconnect_events()
 	_clear_cells()
+	# See abort_run()'s own comment on this line - the run is over, so the cap
+	# it set for start_run() shouldn't leak into whatever plays next.
+	ScoreManager.multiplier_cap = -1.0
 
 	var hardcore := max_lives <= 1
 	var suffix := "hardcore" if hardcore else "normal"
@@ -739,7 +797,22 @@ func _on_clear_all() -> void:
 		return
 	_run_nuke_cascade(live)
 
+# Every await here is a point at which the run this cascade belongs to can end
+# underneath it, so each one re-checks _is_current_run(generation) rather than
+# the bare `_running` this used to test.
+#
+# `_running` alone was not enough. The awaits below use process_always = false,
+# so they HALT while the tree is paused - pause mid-cascade, hit RESTART, and
+# start_run() sets _running back to true (synchronously, before the suspended
+# timer can next fire), so the old bail check was satisfied again and the
+# cascade carried on into a run that wasn't its own: firing its completion
+# flash, punch and shake over the fresh board, and - far worse - calling
+# release_gameplay() on a freeze counter the NEW run's own cascade had since
+# taken, unfreezing a board that was supposed to be visually stopped. That is
+# exactly the desync GDD 11 promises cannot happen.
 func _run_nuke_cascade(live: Array) -> void:
+	var generation := _run_generation
+
 	# Ordered by distance from the button the player pressed, so the chain reads
 	# as spreading outward from the source rather than in arbitrary grid order.
 	var origin: Vector2 = Powerups.button_origin(PowerupSystem.Kind.CLEAR_ALL)
@@ -757,13 +830,11 @@ func _run_nuke_cascade(live: Array) -> void:
 
 	# The wind-up plays first - the cascade is the payload it anticipates.
 	await get_tree().create_timer(Juice.WINDUP_SEC, false, false, true).timeout
+	if not _is_current_run(generation):
+		_abandon_nuke_cascade(generation)
+		return
 
 	for i in range(total):
-		# The run can end underneath a cascade (restart, back to title) - bail
-		# rather than resolving slots belonging to a run that no longer exists.
-		if not _running:
-			Juice.release_gameplay()
-			return
 		var slot = live[i]
 		if slot != null and is_instance_valid(slot) and not slot.stopped:
 			# force_resolve already fires this slot's own click burst, so the
@@ -773,6 +844,9 @@ func _run_nuke_cascade(live: Array) -> void:
 			AudioManager.play_nuke_note(i, total)
 		if i < total - 1:
 			await get_tree().create_timer(gap, false, false, true).timeout
+			if not _is_current_run(generation):
+				_abandon_nuke_cascade(generation)
+				return
 
 	# The final note played above IS the resolving chord, so the flash lands on
 	# the same beat rather than needing a separate completion sound.
@@ -793,6 +867,26 @@ func _run_nuke_cascade(live: Array) -> void:
 		punch_mult *= NUKE_PUNCH_MULT_BONUS
 	Juice.punch(punch_mult)
 	Juice.shake(Juice.ShakeProfile.DECAY, lerpf(0.6, 1.3, weight))
+
+# Drops an abandoned cascade without firing any of its completion presentation.
+#
+# Whether to hand back the freeze is the whole subtlety, and it turns on which
+# kind of "no longer current" this is:
+#
+#   Generation UNCHANGED (the run merely stopped running - _begin_run_over()
+#   clears _running for the stillness beat well before _end_run() bumps the
+#   generation): nothing has reset Juice yet, so the freeze this cascade took
+#   is still genuinely counted and still ours to give back.
+#
+#   Generation CHANGED (start_run / abort_run / _end_run): all three of those
+#   paths reach Juice.reset_run_effects() - start_run() calls it directly, the
+#   other two via the GameManager state change - and that zeroes _freeze_count
+#   outright. Our freeze no longer exists to release. Calling release_gameplay()
+#   anyway would decrement a counter belonging to whatever froze next (the new
+#   run's own cascade, most likely) and thaw a board that must stay frozen.
+func _abandon_nuke_cascade(generation: int) -> void:
+	if generation == _run_generation:
+		Juice.release_gameplay()
 
 func _slot_centre(slot) -> Vector2:
 	return slot.global_position + slot.size * 0.5

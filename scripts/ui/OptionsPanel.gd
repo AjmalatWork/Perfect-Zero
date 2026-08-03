@@ -237,7 +237,10 @@ func _build() -> void:
 	col.add_child(_rule(0.22))
 	col.add_child(_gap(14))
 
-	var reset := _button("RESET SAVE DATA", RED)
+	# Named for exactly what it clears now (progress, not preferences) - see
+	# _on_confirm_reset() for why that split needed its own fix, not just a
+	# relabel.
+	var reset := _button("RESET PROGRESS", RED)
 	reset.pressed.connect(_on_reset_pressed)
 	col.add_child(_wrap(reset))
 
@@ -316,7 +319,14 @@ func _build_confirm_overlay() -> void:
 	# Wrapped rather than leaning on the hard newline alone: at the larger body
 	# size the first sentence no longer fits one line on a 900-unit portrait
 	# canvas, and an unwrapped Label would just run off both edges.
-	var warning := _line("This erases all high scores, progress, and settings.\nThis can't be undone.",
+	#
+	# Scoped explicitly to progress, not settings - preferences (volume,
+	# Reduce effects) are deliberately kept, per the same reasoning Reduce
+	# effects itself exists for: wiping an accessibility toggle as a side
+	# effect of replaying the campaign would be a hostile surprise, not a
+	# clean slate.
+	var warning := _line("This erases all high scores, unlocks, and progress.\n" +
+		"Your audio and display settings are kept.\nThis can't be undone.",
 		_fs(FIELD_LABEL_SIZE))
 	warning.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	warning.custom_minimum_size = Vector2(700 * _s(), 0)
@@ -336,6 +346,13 @@ func _build_confirm_overlay() -> void:
 
 func _on_confirm_reset() -> void:
 	SaveManager.clear_all()
+	# clear_all() wipes the ENTIRE save file - it has no notion of "progress"
+	# vs. "preferences". This reset is deliberately scoped to progress only
+	# (see the confirm prompt's own copy above), so the player's current
+	# settings are written straight back in - see Settings.persist_current_values()
+	# for why this has to happen here rather than being left to look
+	# "already correct" for the rest of the session.
+	Settings.persist_current_values()
 	_confirm_overlay.visible = false
 
 # --- Builders -------------------------------------------------------------
