@@ -17,9 +17,20 @@ extends Node
 signal changed
 
 const LANDSCAPE_SIZE := Vector2(1600, 900)
-const PORTRAIT_SIZE := Vector2(900, 1600)
+
+# Portrait's WIDTH is fixed - every dp/touch-target calibration and the
+# gameplay board's own sizing (EndlessRunner.PORTRAIT_CELL_SIZE etc.) is done
+# against this exact number, so changing it would invalidate all of that.
+# Portrait's HEIGHT is no longer a fixed 1600, though - see
+# _compute_portrait_size() below for why.
+const PORTRAIT_WIDTH := 900.0
+# Used only if the real window size isn't readable yet (defensive fallback) -
+# this is the project's original fixed portrait size, kept as the safe default
+# rather than guessing something new.
+const PORTRAIT_SIZE_FALLBACK := Vector2(900, 1600)
 
 var canvas_size: Vector2 = LANDSCAPE_SIZE
+var _portrait: bool = false
 
 # The rect that actually reaches the screen edges, in canvas-local coordinates.
 #
@@ -34,6 +45,33 @@ var canvas_size: Vector2 = LANDSCAPE_SIZE
 # dim or flash) should use these instead of canvas_size.
 var overscan_position: Vector2 = Vector2.ZERO
 var overscan_size: Vector2 = LANDSCAPE_SIZE
+
+# --- Dynamic portrait height --------------------------------------------------
+#
+# A fixed 900x1600 (9:16) canvas under stretch aspect "expand" only fills the
+# real screen on a device that IS exactly 9:16. Almost no Android phone is -
+# most are taller (19.5:9, 20:9, 21:9) - so "expand" becomes width-bound and
+# leaves real, unused height above and below the content. The earlier portrait
+# pass painted a backdrop over those bars so they read as intentional
+# background rather than raw engine clear colour, but the dead margin itself
+# was still there.
+#
+# The actual fix: hold the WIDTH fixed (so every dp/touch-target number and the
+# gameplay board's sizing stays exactly what it was calibrated against) and
+# make the HEIGHT match whatever the real device's aspect ratio implies -
+# canvas_height = width / (real_width / real_height). That makes the canvas's
+# own aspect ratio identical to the device's, so Godot's
+# min(win.x/base.x, win.y/base.y) scale is the same on both axes by
+# construction, for any aspect ratio - not just the common ones. Overscan
+# collapses to ~0 as a direct consequence, with no changes needed to
+# MainScreenRouter._recenter() or _recompute_overscan() below - both already
+# derive everything from canvas_size.
+func _compute_portrait_size() -> Vector2:
+	var window: Vector2i = DisplayServer.window_get_size()
+	if window.x <= 0 or window.y <= 0:
+		return PORTRAIT_SIZE_FALLBACK
+	var aspect: float = float(window.x) / float(window.y)
+	return Vector2(PORTRAIT_WIDTH, roundf(PORTRAIT_WIDTH / aspect))
 
 # Dev-only. Run with `Godot --path . -- --portrait` to force the portrait canvas
 # on any platform, so the layouts can be iterated on desktop instead of costing a
@@ -58,7 +96,7 @@ func _ready() -> void:
 	_recompute_overscan()
 
 func is_portrait() -> bool:
-	return canvas_size == PORTRAIT_SIZE
+	return _portrait
 
 # Settings.changed also fires for volume and the effects toggle, so this has to
 # be idempotent - the guard is what stops an unrelated setting from restretching
@@ -69,8 +107,8 @@ func is_portrait() -> bool:
 # frames later as a resize. Keying off the resize instead would also catch
 # desktop windows the player happened to drag taller than they are wide.
 func _refresh() -> void:
-	var want: Vector2 = PORTRAIT_SIZE if (_forced_portrait or Settings.is_portrait()) \
-		else LANDSCAPE_SIZE
+	_portrait = _forced_portrait or Settings.is_portrait()
+	var want: Vector2 = _compute_portrait_size() if _portrait else LANDSCAPE_SIZE
 	if want == canvas_size:
 		return
 	canvas_size = want
@@ -78,7 +116,20 @@ func _refresh() -> void:
 	_recompute_overscan()
 	changed.emit()
 
+# Rotation, multi-window/split-screen and foldable fold/unfold all surface here
+# as a root resize, and any of them can change the real device aspect ratio -
+# not just move the pillarbox bands the way a plain landscape window drag does
+# - so portrait recomputes its own dynamic height first, on top of the existing
+# overscan recompute.
 func _on_root_resized() -> void:
+	if _portrait:
+		var want := _compute_portrait_size()
+		if want != canvas_size:
+			canvas_size = want
+			get_window().content_scale_size = Vector2i(canvas_size)
+			_recompute_overscan()
+			changed.emit()
+			return
 	if _recompute_overscan():
 		changed.emit()
 

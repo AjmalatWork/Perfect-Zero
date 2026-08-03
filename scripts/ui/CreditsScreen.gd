@@ -322,7 +322,12 @@ func _stack_line(text: String, font_size: int, color: Color, outline: Color = Co
 func _button(text: String, accent: Color) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(220, 64) * _s()
+	# 64 raw is only ~43.5dp effective at this screen's 1.7 scale - just under
+	# Android's 48dp minimum. Bumped to 72 (~49dp) in portrait only; landscape
+	# (desktop/web) keeps the original 64. Applies to both BACK and EMAIL US,
+	# the only two buttons this helper builds.
+	var button_h: float = 72.0 if Layout.is_portrait() else 64.0
+	button.custom_minimum_size = Vector2(220, button_h) * _s()
 	button.add_theme_font_size_override("font_size", _fs(26))
 	button.add_theme_color_override("font_color", Color.WHITE)
 	button.add_theme_color_override("font_outline_color", accent)

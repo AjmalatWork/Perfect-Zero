@@ -47,9 +47,15 @@ const ANTICIPATION_FADE_IN := 0.35
 # from the score's centre rather than from the badge - a record belongs to a
 # number, so the two have to read as one object rather than as a label parked
 # somewhere near one.
-const BADGE_SIZE := Vector2(300, 44)
+# Widened alongside FS_BADGE's bump below (28 -> 44) - "ALL PERFECT!" at the
+# bigger size needs more than the original 300x44 box to sit in without
+# clipping.
+const BADGE_SIZE := Vector2(360, 62)
 const BADGE_GLOW_SIZE := Vector2(520, 300)
-const BADGE_LANE_HEIGHT := 44.0   # reserved up front so a record can't reflow the column
+# Reserved up front so a record can't reflow the column - matches BADGE_SIZE.y
+# now that FS_BADGE grew (28 -> 44); it used to be smaller than the badge's own
+# height, which would have let the bigger badge overlap the score below it.
+const BADGE_LANE_HEIGHT := 62.0
 const FLOURISH_STAGGER := 0.55    # gap when NEW BEST and ALL PERFECT both land
 
 # Countup escalation. 0.16 puts a stage at full intensity after ~6 PERFECTs,
@@ -113,15 +119,27 @@ const HEAT := Color("ff5a1e")          # flames and heat flashes, never text
 # Steps far enough apart that rank is readable at a glance. The hero is a clean
 # 2x the tally, which is what keeps the countup from competing with the number
 # it resolves into.
-const FS_HERO := 92        # final score
+# FS_HERO/FS_TALLY/FS_BADGE bumped by a lot on a further user request,
+# covering the score, the "tally x mult" equation, and the NEW BEST/ALL
+# PERFECT badges. None of these three run through _fs()/_s() at their call
+# sites, so - like FS_SUPPORT below - the bump applies in both orientations.
+const FS_HERO := 128       # final score
 const FS_HEADLINE := 60    # STAGE CLEAR! / FAILED
 const FS_SIGN := 44        # transient grade signs, own lane
-const FS_TALLY := 46       # "tally x mult"
+const FS_TALLY := 64       # "tally x mult"
 const FS_STREAK := 40      # transient streak popup
-const FS_BADGE := 28
+const FS_BADGE := 44
 const FS_BUTTON := 28
-const FS_SUPPORT := 24     # record line, tertiary button
+# Record/near-miss line ("BEST n" / "PREVIOUS BEST n" / "n GOODS AWAY FROM ALL
+# PERFECT"). Bumped portrait-only, twice now on further user requests; neither
+# call site runs this through _fs()/_s(), so it's otherwise identical in both
+# orientations; landscape keeps the original 24.
+const FS_SUPPORT_LANDSCAPE := 24
+const FS_SUPPORT_PORTRAIT := 42
 const FS_COMPLETE := 32    # campaign-complete message
+
+func _fs_support() -> int:
+	return FS_SUPPORT_PORTRAIT if Layout.is_portrait() else FS_SUPPORT_LANDSCAPE
 
 # --- Zone rules -----------------------------------------------------------
 # The column runs headline / score / actions. Without a separator those read as
@@ -829,7 +847,11 @@ func _play_unlock_banner(text: String) -> void:
 
 	var nice := Button.new()
 	nice.text = "OKAY!"
-	nice.custom_minimum_size = Vector2(200, 64) * _s()
+	# 64 raw is only ~34.6dp effective at this screen's 1.35 scale - under
+	# Android's 48dp minimum. Bumped to 90 (~48.6dp) in portrait only, matching
+	# this screen's other buttons; landscape (desktop/web) keeps the original 64.
+	var nice_h: float = 90.0 if Layout.is_portrait() else 64.0
+	nice.custom_minimum_size = Vector2(200, nice_h) * _s()
 	nice.add_theme_font_size_override("font_size", _fs(28))
 	nice.add_theme_color_override("font_color", Color.WHITE)
 	nice.add_theme_color_override("font_outline_color", GOLD)
@@ -1475,7 +1497,7 @@ func _build_ui() -> void:
 
 	# Supporting text takes the muted fill directly, with a dark edge only for
 	# legibility over the backdrop - the same idiom the grade signs use.
-	_record_label = _make_label(FS_SUPPORT, Color(0, 0, 0, 0.6), 3)
+	_record_label = _make_label(_fs_support(), Color(0, 0, 0, 0.6), 3)
 	_record_label.add_theme_color_override("font_color", MUTED)
 	_record_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	# Labels default to top-aligned text. The reserved lane below is taller than
@@ -1498,16 +1520,19 @@ func _build_ui() -> void:
 	_button_row.add_theme_constant_override("separation", _fs(24))
 	_button_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	# Reserve the row's final height up front (buttons don't exist until the end).
-	_button_row.custom_minimum_size = Vector2(0, 84) * _s()
+	# Matches PORTRAIT_BUTTON_SIZE.y (140) in portrait now that _add_button sizes
+	# itself directly there rather than through _s(); landscape keeps the old 84.
+	_button_row.custom_minimum_size = Vector2(0, 140) if Layout.is_portrait() else Vector2(0, 84) * _s()
 	col.add_child(_button_row)
 
 	# Second row, below the RETRY/NEXT STAGE row, for the title button.
 	_title_row = HBoxContainer.new()
 	_title_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	# Reserve the row's final height up front, same reasoning as _button_row above:
-	# it stays empty until _build_buttons runs, and an unreserved 0->54 jump when
-	# BACK TO TITLE finally appears shifts everything above it in the centred column.
-	_title_row.custom_minimum_size = Vector2(0, 54) * _s()
+	# it stays empty until _build_buttons runs, and an unreserved jump when
+	# BACK TO TITLE finally appears shifts everything above it in the centred
+	# column. 140 in portrait now that BACK TO TITLE shares PORTRAIT_BUTTON_SIZE.
+	_title_row.custom_minimum_size = Vector2(0, 140) if Layout.is_portrait() else Vector2(0, 54) * _s()
 	col.add_child(_title_row)
 
 	# Free-floating, like the streak popup below: parking it in the centred
@@ -1565,9 +1590,12 @@ func _build_ui() -> void:
 	# The consolation half of the same lane: quiet supporting weight, not a
 	# celebration, so it takes the record line's size and muted treatment rather
 	# than the badge's.
-	_near_miss_label = _make_label(FS_SUPPORT, Color(0, 0, 0, 0.6), 3)
+	_near_miss_label = _make_label(_fs_support(), Color(0, 0, 0, 0.6), 3)
 	_near_miss_label.add_theme_color_override("font_color", MUTED)
-	_near_miss_label.size = Vector2(BADGE_SIZE.x, 34.0) * _s()
+	# Height bumped 34 -> 50 alongside FS_SUPPORT_PORTRAIT's own increase, so
+	# the centering math in _position_verdict() isn't measuring against a box
+	# shorter than the actual (bigger) glyphs.
+	_near_miss_label.size = Vector2(BADGE_SIZE.x, 50.0) * _s()
 	_near_miss_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_near_miss_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_near_miss_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1878,6 +1906,12 @@ func _build_sign_ring() -> void:
 # accent, so a row still reads as one set of related choices.
 enum Emphasis { PRIMARY, SECONDARY, TERTIARY }
 
+# Matches PauseMenu's/EndlessEndScreen's own SECONDARY-with-glow button
+# exactly - a user request for this screen's buttons to get "the same
+# treatment as the endless end screen".
+const PORTRAIT_BUTTON_SIZE := Vector2(380, 140)
+const PORTRAIT_BUTTON_FONT := 46  # bumped by a lot on a further user request
+
 func _add_button(container: HBoxContainer, text: String, accent: Color, handler: Callable,
 		emphasis: int = Emphasis.PRIMARY) -> void:
 	var button := Button.new()
@@ -1885,9 +1919,32 @@ func _add_button(container: HBoxContainer, text: String, accent: Color, handler:
 	button.pressed.connect(handler)
 	PressFeedback.apply(button)
 
+	if Layout.is_portrait():
+		# Emphasis still exists (RETRY/NEXT STAGE/BACK TO TITLE keep their own
+		# accent colours) but no longer changes the box style itself here - in
+		# portrait every button gets the identical lit-panel-with-glow
+		# treatment, same as Endless End Screen's RETRY/BACK TO TITLE pair.
+		# Full brightness (white text, full-alpha border) rather than the
+		# blended/fainter look this first had - a user-reported issue where
+		# these read visibly darker than PauseMenu's RESUME despite the glow.
+		button.custom_minimum_size = PORTRAIT_BUTTON_SIZE
+		button.add_theme_font_size_override("font_size", PORTRAIT_BUTTON_FONT)
+		button.add_theme_color_override("font_color", Color.WHITE)
+		button.add_theme_color_override("font_outline_color", accent)
+		button.add_theme_constant_override("outline_size", 4)
+		button.add_theme_stylebox_override("normal", _make_box(accent, 0.85, 0.35, 8))
+		button.add_theme_stylebox_override("hover", _make_box(accent, 0.7, 0.5, 12))
+		button.add_theme_stylebox_override("pressed", _make_box(accent, 0.6, 0.4, 6))
+		container.add_child(button)
+		return
+
+	# 84/54 raw, landscape only (desktop/web, no dp minimum to clear).
+	var button_h: float = 84.0
+	var tertiary_h: float = 54.0
+
 	match emphasis:
 		Emphasis.SECONDARY:
-			button.custom_minimum_size = Vector2(240, 84) * _s()
+			button.custom_minimum_size = Vector2(240, button_h) * _s()
 			button.add_theme_font_size_override("font_size", _fs(FS_BUTTON))
 			button.add_theme_color_override("font_color", accent.lerp(TEXT_FILL, 0.5))
 			button.add_theme_constant_override("outline_size", 0)
@@ -1895,8 +1952,8 @@ func _add_button(container: HBoxContainer, text: String, accent: Color, handler:
 			button.add_theme_stylebox_override("hover", _make_box(accent, 0.82, 0.3, 8, 2, 0.9))
 			button.add_theme_stylebox_override("pressed", _make_box(accent, 0.72, 0.25, 4, 2, 0.9))
 		Emphasis.TERTIARY:
-			button.custom_minimum_size = Vector2(200, 54) * _s()
-			button.add_theme_font_size_override("font_size", _fs(FS_SUPPORT))
+			button.custom_minimum_size = Vector2(200, tertiary_h) * _s()
+			button.add_theme_font_size_override("font_size", _fs(FS_SUPPORT_LANDSCAPE))
 			button.add_theme_color_override("font_color", accent)
 			button.add_theme_color_override("font_hover_color", TEXT_FILL)
 			button.add_theme_color_override("font_pressed_color", TEXT_FILL)
@@ -1905,7 +1962,7 @@ func _add_button(container: HBoxContainer, text: String, accent: Color, handler:
 			button.add_theme_stylebox_override("hover", _make_box(accent, 0.88, 0.0, 0, 0, 0.0))
 			button.add_theme_stylebox_override("pressed", _make_box(accent, 0.8, 0.0, 0, 0, 0.0))
 		_:
-			button.custom_minimum_size = Vector2(240, 84) * _s()
+			button.custom_minimum_size = Vector2(240, button_h) * _s()
 			button.add_theme_font_size_override("font_size", _fs(FS_BUTTON))
 			button.add_theme_color_override("font_color", Color.WHITE)
 			button.add_theme_color_override("font_outline_color", accent)

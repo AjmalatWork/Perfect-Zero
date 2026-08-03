@@ -38,18 +38,20 @@ const TOUCH_BACK := 120.0   # x1.2 = 144 units = 57.6dp, matching HelpScreen's B
 # Body text. _fs(26) measured 12.5dp, under the 14sp floor for body copy; 30
 # lands at 14.4dp. Each label now owns a full-width line of its own rather than a
 # 360-unit cell beside its control, so there is no longer a width ceiling on it.
-const FIELD_LABEL_SIZE := 30
+# Bumped by a lot (30 -> 42) on a further user request, matching the same pass
+# applied to Stage Result/Endless End/Pause/Title/tutorial screens.
+const FIELD_LABEL_SIZE := 42
 
 # Uppercase eyebrows over each group. Deliberately below body size - the
 # hierarchy here is carried by colour and case, not scale - and deliberately
 # MUTED rather than gold: this project reserves gold for outcomes and records,
 # and spending it on group scaffolding is the same mistake the Scores table
 # header was making.
-const SECTION_LABEL_SIZE := 26
+const SECTION_LABEL_SIZE := 36
 # The one-line explanation under a toggle. "Reduce screen effects" said nothing
 # about what it actually does, which is kill screen shake, camera punch,
 # hit-stop and full-screen flashes outright for motion sensitivity.
-const SUBTITLE_SIZE := 26
+const SUBTITLE_SIZE := 36
 
 # Absolute canvas units, deliberately NOT multiplied by _s(): this is a width
 # budget against a fixed-width canvas, so scaling it would just re-introduce the
@@ -162,7 +164,7 @@ func _build() -> void:
 
 	var title := WaveHeading.new()
 	outer.add_child(title)
-	title.configure("OPTIONS", _fs(56), TEXT_FILL, NEON)
+	title.configure("OPTIONS", _fs(72), TEXT_FILL, NEON)
 	outer.add_child(_gap(18))
 
 	# The settings sit on a panel rather than floating on the backdrop, so each
@@ -310,7 +312,7 @@ func _build_confirm_overlay() -> void:
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 	center.add_child(col)
 
-	col.add_child(_heading("Are you sure?", _fs(40), RED))
+	col.add_child(_heading("Are you sure?", _fs(52), RED))
 	# Wrapped rather than leaning on the hard newline alone: at the larger body
 	# size the first sentence no longer fits one line on a 900-unit portrait
 	# canvas, and an unwrapped Label would just run off both edges.
@@ -507,7 +509,9 @@ func _button(text: String, accent: Color) -> Button:
 	var button := Button.new()
 	button.text = text
 	button.custom_minimum_size = Vector2(240, _button_h()) * _s()
-	button.add_theme_font_size_override("font_size", _fs(28))
+	# Bumped by a lot (28 -> 38 base, ~46 effective at this screen's 1.2 scale)
+	# on a further user request, matching the other redesigned buttons.
+	button.add_theme_font_size_override("font_size", _fs(38))
 	button.add_theme_color_override("font_color", Color.WHITE)
 	button.add_theme_color_override("font_outline_color", accent)
 	button.add_theme_constant_override("outline_size", 4)

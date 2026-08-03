@@ -24,6 +24,31 @@ const TEXT_FILL := Color("dfe3ee")
 # canvas.
 const ICON_RIGHT_INSET := 172.0
 const ICON_SIZE := Vector2(64, 64)
+# 64 units is 26dp - well under Android's 48dp minimum. Grown to 120 (48dp) in
+# portrait only; landscape is desktop/web with a mouse, where dp minimums don't
+# apply. The inset grows too, so the bigger icon still clears PauseMenu's own
+# (also-grown) corner icon with the same gap the two kept in landscape.
+const ICON_SIZE_PORTRAIT := Vector2(120, 120)
+# Recomputed to keep the same 20-unit gap to PauseMenu's own icon now that
+# PauseMenu's right margin grew from 24 to 32 (see PauseMenu.
+# PAUSE_ICON_RIGHT_MARGIN_PORTRAIT's own comment - phone corner-curve
+# clearance, a user request). PauseMenu's icon now spans x 748..868; this
+# icon's right edge has to land 20 short of that (728), and this inset is
+# measured to the icon's LEFT edge, so 900 - (728 - 120) = 292.
+const ICON_RIGHT_INSET_PORTRAIT := 292.0
+# Matches PauseMenu's own PAUSE_ICON_TOP_MARGIN_PORTRAIT so both icons sit on
+# the same top edge - see that constant's comment for the phone corner-curve
+# reasoning.
+const ICON_TOP_MARGIN_PORTRAIT := 40.0
+
+func _icon_size() -> Vector2:
+	return ICON_SIZE_PORTRAIT if Layout.is_portrait() else ICON_SIZE
+
+func _icon_right_inset() -> float:
+	return ICON_RIGHT_INSET_PORTRAIT if Layout.is_portrait() else ICON_RIGHT_INSET
+
+func _icon_top() -> float:
+	return ICON_TOP_MARGIN_PORTRAIT if Layout.is_portrait() else 28.0
 
 const BADGE_COLOR := Color("ffd23f")
 const BADGE_PULSE_HZ := 1.6
@@ -49,7 +74,7 @@ var _page_nav: PageNav
 var _closing: bool = false
 
 func _icon_pos() -> Vector2:
-	return Vector2(Layout.canvas_size.x - ICON_RIGHT_INSET, 28)
+	return Vector2(Layout.canvas_size.x - _icon_right_inset(), _icon_top())
 
 
 # Portrait is a 900-wide canvas rather than 1600, so this screen's landscape type
@@ -98,7 +123,7 @@ func _apply_canvas() -> void:
 func _apply_safe_area() -> void:
 	var origin := _icon_pos() + Vector2(-SafeArea.right, SafeArea.top)
 	_icon_button.position = origin
-	_badge.position = origin + Vector2(ICON_SIZE.x - BADGE_SIZE * 0.6, -BADGE_SIZE * 0.4)
+	_badge.position = origin + Vector2(_icon_size().x - BADGE_SIZE * 0.6, -BADGE_SIZE * 0.4)
 
 func _process(_delta: float) -> void:
 	if _badge == null:
@@ -215,14 +240,18 @@ func _build() -> void:
 	_icon_button = Button.new()
 	_icon_button.text = "?"
 	_icon_button.position = _icon_pos()
-	_icon_button.custom_minimum_size = ICON_SIZE
-	_icon_button.add_theme_font_size_override("font_size", _fs(30))
+	_icon_button.custom_minimum_size = _icon_size()
+	# The glyph is scaled directly against the bigger portrait circle, not
+	# through _fs() (which only carries the modest 1.15 text-scale factor) - a
+	# 30pt "?" would read tiny in a 120-unit circle nearly twice ICON_SIZE's
+	# landscape diameter.
+	_icon_button.add_theme_font_size_override("font_size", 46 if Layout.is_portrait() else _fs(30))
 	_icon_button.add_theme_color_override("font_color", Color.WHITE)
 	_icon_button.add_theme_color_override("font_outline_color", NEON)
 	_icon_button.add_theme_constant_override("outline_size", 4)
 	var circle := StyleBoxFlat.new()
 	circle.bg_color = NEON.darkened(0.75)
-	circle.set_corner_radius_all(int(ICON_SIZE.x * 0.5))
+	circle.set_corner_radius_all(int(_icon_size().x * 0.5))
 	circle.set_border_width_all(3)
 	circle.border_color = NEON
 	_icon_button.add_theme_stylebox_override("normal", circle)
@@ -311,6 +340,11 @@ func _build() -> void:
 	col.add_child(_page_nav)
 
 	var close_button := _button("CLOSE", NEON)
+	# 180x56 at this screen's 1.15 scale is only ~26dp tall - well under
+	# Android's 48dp minimum. Bumped directly in portrait only; landscape
+	# (desktop/web) keeps _button()'s original size.
+	if Layout.is_portrait():
+		close_button.custom_minimum_size = Vector2(200, 110)
 	close_button.pressed.connect(close)
 	var close_wrap := CenterContainer.new()
 	close_wrap.add_child(close_button)

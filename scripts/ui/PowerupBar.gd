@@ -9,22 +9,49 @@ class_name PowerupBar
 # centred in the 1600x900 canvas, so it spans x 546..1054 and this column sits
 # clear of it.
 #
-# Portrait: that margin doesn't exist - the grid is 640 wide in a 900 canvas
-# (x 130..770) - so the column becomes a row below the grid instead. That also
-# puts the board and the powerups both inside one-handed thumb reach, which the
-# landscape layout never had to solve for.
+# Portrait: that margin doesn't exist - the grid now centres on the real screen
+# centre instead (see EndlessRunner.PORTRAIT_GRID_ZONE_SIZE's own comment), so
+# this becomes a row anchored to the BOTTOM of the (dynamically-sized) canvas,
+# sitting just above the fail-cross row, rather than a fixed offset below the
+# grid - a user request on top of the dynamic-canvas fix, since the old fixed
+# "below the grid" position assumed a grid that no longer sits where it did.
 const LANDSCAPE_BUTTON_SIZE := Vector2(116, 116)
-const PORTRAIT_BUTTON_SIZE := Vector2(140, 140)   # 46dp -> 56dp, clearing the 48dp minimum
+# Bumped from 140 (56dp) to 170 (68dp) - a further user-requested size increase
+# on top of the earlier touch-target pass.
+const PORTRAIT_BUTTON_SIZE := Vector2(170, 170)
 
 # Ordered SHIELD, CLEAR_ALL, OVERCLOCK - see _build().
 const LANDSCAPE_POSITIONS: Array[Vector2] = [
 	Vector2(220, 322), Vector2(220, 462), Vector2(220, 602),
 ]
-# 3*140 + 2*40 = 500 wide, centred in 900. Sat below PORTRAIT_GRID_ZONE, which
-# ends at y 1100.
-const PORTRAIT_POSITIONS: Array[Vector2] = [
-	Vector2(200, 1150), Vector2(380, 1150), Vector2(560, 1150),
-]
+
+# Portrait Y is computed at runtime (see _portrait_positions()) since it has to
+# sit relative to the fail-cross row, whose own Y depends on the dynamic canvas
+# height - a fixed constant can't express that relationship. X is fixed: three
+# 170-wide buttons plus two 40-wide gaps is 590, centred in the 900-wide
+# portrait canvas leaves 155 on each side.
+const PORTRAIT_BUTTON_GAP := 40.0
+const PORTRAIT_ROW_START_X := 155.0
+
+# Mirrors EndlessHUD's own bottom-row geometry (_bottom_row_pos/BOTTOM_ROW_*) -
+# duplicated rather than shared, since the two nodes are built independently and
+# this is the one place they need to agree on where the fail-cross row's top
+# edge actually is, to sit just above it.
+const CROSS_ROW_TOP_MARGIN_PORTRAIT := 170.0  # matches EndlessHUD.BOTTOM_ROW_MARGIN_PORTRAIT + BOTTOM_ROW_HEIGHT_PORTRAIT
+const POWERUP_TO_CROSS_GAP := 24.0
+
+func _portrait_positions() -> Array[Vector2]:
+	var cross_row_top: float = Layout.canvas_size.y - CROSS_ROW_TOP_MARGIN_PORTRAIT
+	var y: float = cross_row_top - POWERUP_TO_CROSS_GAP - PORTRAIT_BUTTON_SIZE.y
+	var xs := [
+		PORTRAIT_ROW_START_X,
+		PORTRAIT_ROW_START_X + PORTRAIT_BUTTON_SIZE.x + PORTRAIT_BUTTON_GAP,
+		PORTRAIT_ROW_START_X + (PORTRAIT_BUTTON_SIZE.x + PORTRAIT_BUTTON_GAP) * 2.0,
+	]
+	var out: Array[Vector2] = []
+	for x in xs:
+		out.append(Vector2(x, y))
+	return out
 
 # Keyboard alternates to clicking. Handled as raw keycodes rather than InputMap
 # actions so this needs no project.godot input wiring - the buttons are the
@@ -55,7 +82,7 @@ func _build() -> void:
 
 	size = Layout.canvas_size
 	var portrait := Layout.is_portrait()
-	var positions: Array[Vector2] = PORTRAIT_POSITIONS if portrait else LANDSCAPE_POSITIONS
+	var positions: Array[Vector2] = _portrait_positions() if portrait else LANDSCAPE_POSITIONS
 	var button_size: Vector2 = PORTRAIT_BUTTON_SIZE if portrait else LANDSCAPE_BUTTON_SIZE
 
 	_add_button(PowerupSystem.Kind.SHIELD, positions[0], button_size)

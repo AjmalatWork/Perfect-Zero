@@ -117,7 +117,11 @@ func _add_back_button() -> void:
 	# made this screen's own scale feel a size class up from the others. Scaled
 	# by _s() the same as everything else here, same as Credits' own BACK
 	# scales by its own PORTRAIT_SCALE.
-	back.custom_minimum_size = Vector2(220, 64) * _s()
+	# 64 raw is only ~33dp effective at this screen's 1.3 scale - under Android's
+	# 48dp minimum. Bumped to 96 (~49.9dp) in portrait only; landscape (desktop/
+	# web) keeps the original 64.
+	var back_h: float = 96.0 if Layout.is_portrait() else 64.0
+	back.custom_minimum_size = Vector2(220, back_h) * _s()
 	_style_button(back, NORMAL_ACCENT, _fs(26))  # same cyan as the title screen's ARCADE button
 	back.pressed.connect(_on_back)
 	PressFeedback.apply(back)

@@ -6,12 +6,29 @@ const GOLD := Color("ffd23f")
 const FAIL_RED := Color("ff2e5e")
 const TEXT_FILL := Color("dfe3ee")
 
-# Combo meter. The live segment (tally x multiplier) grows super-linearly, so
-# the bar uses a square-root curve to stay legible instead of pinning early.
-const METER_WIDTH := 420.0
-const METER_HEIGHT := 12.0
-const METER_FULL := 20000.0     # segment value that fills the bar completely
-const METER_FILL_SPEED := 900.0 # px/sec the fill chases its target
+# Equation/total type scale. Bumped in portrait only, matching the mobile
+# touch-target/type-size pass done elsewhere (Help/Options/Scores etc.);
+# landscape (desktop/web) keeps the original sizes.
+const EQUATION_FONT_LANDSCAPE := 56
+const EQUATION_FONT_PORTRAIT := 78
+const TOTAL_FONT_LANDSCAPE := 26
+const TOTAL_FONT_PORTRAIT := 36
+const EQUATION_HEIGHT_LANDSCAPE := 72.0
+const EQUATION_HEIGHT_PORTRAIT := 100.0
+const TOTAL_HEIGHT_LANDSCAPE := 34.0
+const TOTAL_HEIGHT_PORTRAIT := 48.0
+const EQUATION_TOP_LANDSCAPE := 14.0
+# Below the pause/help icon row instead of beside/behind it (a user request) -
+# icon row bottom is PAUSE_ICON_TOP_MARGIN_PORTRAIT (40) + icon height (120) =
+# 160. Pushed further down a second time (180 -> 260) on a further user
+# request for more clearance below the icons.
+const EQUATION_TOP_PORTRAIT := 260.0
+const TOTAL_GAP_LANDSCAPE := 4.0
+const TOTAL_GAP_PORTRAIT := 8.0
+# Gap between TOTAL and whichever transient popup (streak/milestone) follows -
+# the two share almost the same slot (see _milestone_label below).
+const POPUP_GAP := 10.0
+const POPUP_TO_MILESTONE_GAP := 50.0
 
 var _equation: Label
 var _total: Label
@@ -21,9 +38,6 @@ var _crosses_row: HBoxContainer
 var _cross_labels: Array = []
 var _last_mult: float = 1.0
 var _last_streak: int = 0
-var _meter_track: ColorRect
-var _meter_fill: ColorRect
-var _meter_target: float = 0.0
 var _bottom_row: Control
 
 # --- Live streak counter (persistent, distinct from the growth-pop above) ---
@@ -39,9 +53,31 @@ var _milestone_label: Label
 const MILESTONE_VALUES := [1000, 5000, 10000]
 var _milestones_fired: Dictionary = {}
 
+# Fail-cross row. Bumped in portrait to fit the bigger crosses (see
+# _build_cross_icon) - landscape (desktop/web) is unaffected. Bumped a second
+# time (64 -> 104) on a further user request ("much more").
+const CROSS_BOX_SIZE_LANDSCAPE := 40.0
+const CROSS_BOX_SIZE_PORTRAIT := 104.0
+const CROSS_LINE_WIDTH_LANDSCAPE := 6.0
+const CROSS_LINE_WIDTH_PORTRAIT := 16.0
+const CROSS_SEPARATION_LANDSCAPE := 16
+const CROSS_SEPARATION_PORTRAIT := 40
+const BOTTOM_ROW_HEIGHT_LANDSCAPE := 50.0
+const BOTTOM_ROW_HEIGHT_PORTRAIT := 140.0
+# Distance from the row's own bottom edge to the true canvas bottom edge
+# (before the safe-area lift in _apply_safe_area). PowerupBar.gd's
+# CROSS_ROW_TOP_MARGIN_PORTRAIT mirrors margin+height so it can sit just above
+# this row - keep the two in sync if either changes.
+const BOTTOM_ROW_MARGIN_PORTRAIT := 30.0
+
+func _bottom_row_height() -> float:
+	return BOTTOM_ROW_HEIGHT_PORTRAIT if Layout.is_portrait() else BOTTOM_ROW_HEIGHT_LANDSCAPE
+
 # Authored (inset-free) position; _apply_safe_area() offsets from this. A
 # function rather than a const now that the canvas height differs by orientation.
 func _bottom_row_pos() -> Vector2:
+	if Layout.is_portrait():
+		return Vector2(0, Layout.canvas_size.y - BOTTOM_ROW_MARGIN_PORTRAIT - _bottom_row_height())
 	return Vector2(0, Layout.canvas_size.y - 60)
 
 func _ready() -> void:
@@ -61,79 +97,97 @@ func _ready() -> void:
 	_on_tally_changed(ScoreManager.stage_tally, ScoreManager.multiplier)
 	_on_total_changed(ScoreManager.campaign_total)
 
+# --- Equation/total vertical stack (helpers shared by _build/_apply_canvas_metrics) ---
+
+func _equation_top() -> float:
+	return EQUATION_TOP_PORTRAIT if Layout.is_portrait() else EQUATION_TOP_LANDSCAPE
+
+func _equation_font() -> int:
+	return EQUATION_FONT_PORTRAIT if Layout.is_portrait() else EQUATION_FONT_LANDSCAPE
+
+func _total_font() -> int:
+	return TOTAL_FONT_PORTRAIT if Layout.is_portrait() else TOTAL_FONT_LANDSCAPE
+
+func _equation_height() -> float:
+	return EQUATION_HEIGHT_PORTRAIT if Layout.is_portrait() else EQUATION_HEIGHT_LANDSCAPE
+
+func _total_height() -> float:
+	return TOTAL_HEIGHT_PORTRAIT if Layout.is_portrait() else TOTAL_HEIGHT_LANDSCAPE
+
+func _total_top() -> float:
+	var gap: float = TOTAL_GAP_PORTRAIT if Layout.is_portrait() else TOTAL_GAP_LANDSCAPE
+	return _equation_top() + _equation_height() + gap
+
+# Where the streak popup/counter and milestone stinger start - right after
+# TOTAL, where the combo meter used to sit before it was removed (it no longer
+# served a purpose once the live streak counter and pre-run target/overtake
+# reactions covered the same "how's this run going" question).
+func _popup_top() -> float:
+	return _total_top() + _total_height() + POPUP_GAP
+
 func _build() -> void:
-	_equation = _make_label(56, NEON)
-	_equation.position = Vector2(0, 14)
-	_equation.size = Vector2(Layout.canvas_size.x, 72)
+	_equation = _make_label(_equation_font(), NEON)
+	_equation.position = Vector2(0, _equation_top())
+	_equation.size = Vector2(Layout.canvas_size.x, _equation_height())
 	add_child(_equation)
 
-	_total = _make_label(26, GOLD.darkened(0.15))
-	_total.position = Vector2(0, 90)
-	_total.size = Vector2(Layout.canvas_size.x, 34)
+	_total = _make_label(_total_font(), GOLD.darkened(0.15))
+	_total.position = Vector2(0, _total_top())
+	_total.size = Vector2(Layout.canvas_size.x, _total_height())
 	add_child(_total)
 
-	# Combo meter - the live-scoring vessel the numeric HUD lacks.
-	_meter_track = ColorRect.new()
-	_meter_track.position = Vector2((Layout.canvas_size.x - METER_WIDTH) * 0.5, 126)
-	_meter_track.size = Vector2(METER_WIDTH, METER_HEIGHT)
-	_meter_track.color = Color(1, 1, 1, 0.10)
-	_meter_track.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_meter_track)
-
-	_meter_fill = ColorRect.new()
-	_meter_fill.position = Vector2.ZERO
-	_meter_fill.size = Vector2(0, METER_HEIGHT)
-	_meter_fill.color = NEON
-	_meter_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_meter_track.add_child(_meter_fill)
-
 	_streak_popup = _make_label(38, GOLD)
-	_streak_popup.position = Vector2(0, 140)
+	_streak_popup.position = Vector2(0, _popup_top())
 	_streak_popup.size = Vector2(Layout.canvas_size.x, 46)
 	_streak_popup.modulate.a = 0.0
 	add_child(_streak_popup)
 
 	# Persistent readout (unlike _streak_popup, which only flashes on growth) -
-	# top-right corner so it doesn't compete with the centered equation/total/meter
-	# column. Hidden below streak 2, same threshold the popup already celebrates at.
+	# right-aligned so it doesn't compete with the centered equation/total
+	# column. Sits at the same top as the popup/milestone slot, below the
+	# pause/help icons in the top-right corner - previously at a fixed y=18,
+	# which the touch-target pass's bigger corner icons now overlap. Hidden
+	# below streak 2, same threshold the popup already celebrates at.
 	_streak_counter = _make_label(24, GOLD)
 	_streak_counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_streak_counter.position = Vector2(Layout.canvas_size.x - 190, 18)
+	_streak_counter.position = Vector2(Layout.canvas_size.x - 190, _popup_top())
 	_streak_counter.size = Vector2(170, 34)
 	_streak_counter.visible = false
 	add_child(_streak_counter)
 
-	# Milestone stinger - shares the streak popup's vertical slot below the meter
-	# but is its own label so a milestone and a streak-growth pop landing on the
-	# same frame don't overwrite each other's text.
+	# Milestone stinger - shares the streak popup's vertical slot but is its own
+	# label so a milestone and a streak-growth pop landing on the same frame
+	# don't overwrite each other's text.
 	_milestone_label = _make_label(34, GOLD)
-	_milestone_label.position = Vector2(0, 190)
+	_milestone_label.position = Vector2(0, _popup_top() + POPUP_TO_MILESTONE_GAP)
 	_milestone_label.size = Vector2(Layout.canvas_size.x, 42)
 	_milestone_label.modulate.a = 0.0
 	add_child(_milestone_label)
 
-	# Fail crosses, bottom-center. Held as a field because this row sits only
-	# 60px off the bottom edge - exactly where Android's gesture navigation bar
+	# Fail crosses, bottom-center. Held as a field because this row sits close
+	# to the bottom edge - exactly where Android's gesture navigation bar
 	# lands - so it gets lifted by the safe-area inset (see _apply_safe_area).
+	var bottom_h := _bottom_row_height()
 	_bottom_row = Control.new()
 	_bottom_row.position = _bottom_row_pos()
-	_bottom_row.size = Vector2(Layout.canvas_size.x, 50)
+	_bottom_row.size = Vector2(Layout.canvas_size.x, bottom_h)
 	_bottom_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_bottom_row)
 
 	var center := CenterContainer.new()
 	center.position = Vector2.ZERO
-	center.size = Vector2(Layout.canvas_size.x, 50)
+	center.size = Vector2(Layout.canvas_size.x, bottom_h)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_bottom_row.add_child(center)
 
 	_crosses_row = HBoxContainer.new()
-	_crosses_row.add_theme_constant_override("separation", 16)
+	_crosses_row.add_theme_constant_override("separation",
+		CROSS_SEPARATION_PORTRAIT if Layout.is_portrait() else CROSS_SEPARATION_LANDSCAPE)
 	center.add_child(_crosses_row)
 
 # Lifted clear of the gesture navigation bar. The top-of-screen readouts
-# (equation, total, meter) are horizontally centred and sit well inside the
-# vertical extents, so a side cutout can't reach them.
+# (equation, total, streak popup/counter, milestone) are horizontally centred
+# and sit well inside the vertical extents, so a side cutout can't reach them.
 func _apply_safe_area() -> void:
 	if _bottom_row != null:
 		_bottom_row.position = _bottom_row_pos() - Vector2(0, SafeArea.bottom)
@@ -145,22 +199,28 @@ func _apply_canvas_metrics() -> void:
 	size = Layout.canvas_size
 	var w: float = Layout.canvas_size.x
 	if _equation != null:
-		_equation.size = Vector2(w, 72)
+		_equation.position = Vector2(0, _equation_top())
+		_equation.size = Vector2(w, _equation_height())
 	if _total != null:
-		_total.size = Vector2(w, 34)
-	if _meter_track != null:
-		_meter_track.position = Vector2((w - METER_WIDTH) * 0.5, 126)
+		_total.position = Vector2(0, _total_top())
+		_total.size = Vector2(w, _total_height())
 	if _streak_popup != null:
+		_streak_popup.position = Vector2(0, _popup_top())
 		_streak_popup.size = Vector2(w, 46)
 	if _streak_counter != null:
-		_streak_counter.position = Vector2(w - 190, 18)
+		_streak_counter.position = Vector2(w - 190, _popup_top())
 	if _milestone_label != null:
+		_milestone_label.position = Vector2(0, _popup_top() + POPUP_TO_MILESTONE_GAP)
 		_milestone_label.size = Vector2(w, 42)
 	if _bottom_row != null:
-		_bottom_row.size = Vector2(w, 50)
+		var bottom_h := _bottom_row_height()
+		_bottom_row.size = Vector2(w, bottom_h)
 		for child in _bottom_row.get_children():
 			if child is Control:
-				child.size = Vector2(w, 50)
+				child.size = Vector2(w, bottom_h)
+		if _crosses_row != null:
+			_crosses_row.add_theme_constant_override("separation",
+				CROSS_SEPARATION_PORTRAIT if Layout.is_portrait() else CROSS_SEPARATION_LANDSCAPE)
 	_apply_safe_area()
 
 func _on_tally_changed(tally: int, mult: float) -> void:
@@ -168,8 +228,6 @@ func _on_tally_changed(tally: int, mult: float) -> void:
 	if mult > _last_mult:
 		_pop(_equation)
 	_last_mult = mult
-	# resolve_stage() zeroes the segment on a fail, so the bar drains on its own.
-	_meter_target = clampf(sqrt(float(tally) * mult / METER_FULL), 0.0, 1.0)
 
 	# campaign_total_changed (below) only fires when a segment BANKS, i.e. on a
 	# fail - in Hardcore that's exactly once, right as the run ends, so an
@@ -185,7 +243,6 @@ func _on_tally_changed(tally: int, mult: float) -> void:
 
 func _on_total_changed(total: int) -> void:
 	_total.text = "TOTAL   %d" % total
-	_flash_meter()
 	_check_overtake(total)
 	_check_milestones(total)
 
@@ -236,27 +293,6 @@ func _show_milestone(value: int) -> void:
 	tween.tween_property(_milestone_label, "scale", Vector2.ONE, 0.18) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tween.tween_property(_milestone_label, "modulate:a", 0.0, 0.7).set_delay(0.7)
-
-# The only thing that banks a segment in Endless is a fail, so the bank flash
-# doubles as the "you lost the combo" read.
-func _flash_meter() -> void:
-	if _meter_track == null:
-		return
-	_meter_track.color = Color(FAIL_RED.r, FAIL_RED.g, FAIL_RED.b, 0.55)
-	var tween := create_tween()
-	tween.tween_property(_meter_track, "color", Color(1, 1, 1, 0.10), 0.45)
-
-func _process(delta: float) -> void:
-	if _meter_fill == null or _meter_track == null:
-		return
-	var target_w := _meter_track.size.x * _meter_target
-	_meter_fill.size.x = move_toward(_meter_fill.size.x, target_w, delta * METER_FILL_SPEED)
-	# Cool cyan through gold to hot red as the segment climbs.
-	var t := _meter_target
-	if t < 0.5:
-		_meter_fill.color = NEON.lerp(GOLD, t * 2.0)
-	else:
-		_meter_fill.color = GOLD.lerp(FAIL_RED, (t - 0.5) * 2.0)
 
 func _on_streak_changed(count: int) -> void:
 	# Celebrate a growing streak (2+); don't announce it breaking.
@@ -363,13 +399,22 @@ func react_life_lost(index: int) -> void:
 
 # Drawn as two diagonal Line2Ds rather than a "✕" text glyph - some exported
 # builds' bundled font (notably HTML5/Web) lacks that Unicode character and
-# shows tofu boxes.
+# shows tofu boxes. Bigger in portrait, per a user request - these are purely
+# informational (not tappable), so this is a legibility change, not a
+# touch-target one.
 func _build_cross_icon(color: Color) -> Control:
+	var portrait := Layout.is_portrait()
+	var box_size: float = CROSS_BOX_SIZE_PORTRAIT if portrait else CROSS_BOX_SIZE_LANDSCAPE
+	var line_width: float = CROSS_LINE_WIDTH_PORTRAIT if portrait else CROSS_LINE_WIDTH_LANDSCAPE
+	# Keeps the same proportional inset (8/40 = 0.2 of the box) at any size,
+	# rather than a fixed pixel inset that would look cramped at a bigger box.
+	var inset := box_size * 0.2
+	var far := box_size - inset
 	var box := Control.new()
-	box.custom_minimum_size = Vector2(40, 40)
-	for points in [[Vector2(8, 8), Vector2(32, 32)], [Vector2(32, 8), Vector2(8, 32)]]:
+	box.custom_minimum_size = Vector2(box_size, box_size)
+	for points in [[Vector2(inset, inset), Vector2(far, far)], [Vector2(far, inset), Vector2(inset, far)]]:
 		var line := Line2D.new()
-		line.width = 6
+		line.width = line_width
 		line.default_color = color
 		line.points = PackedVector2Array(points)
 		box.add_child(line)

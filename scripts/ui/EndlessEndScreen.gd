@@ -31,9 +31,26 @@ const TEXT_FILL := Color("dfe3ee")
 const FS_HEADLINE := 60
 const FS_HERO := 88        # the run's score - the equivalent of Stage's final_label
 const FS_NEWBEST := 32
-const FS_STAT := 28        # streak / survived
-const FS_RECORD := 24      # the one supporting line for the score
+# Bumped portrait-only to 34 to match PORTRAIT_BUTTON_FONT at the time - a user
+# request. PORTRAIT_BUTTON_FONT has since been bumped again (34 -> 46, a
+# further "make the buttons bigger" request) but these two weren't asked to
+# follow it a second time, so they're left at their own 34/28. FS_RECORD only
+# goes to 28, not the full 34: its caption can be the much longer "PREVIOUS
+# BEST (Hardcore)" (see STAT_CAPTION_WIDTH's own comment - measured at 307px
+# at the OLD 24pt), and at a full 34pt that string would overflow even the
+# widened portrait column below. Landscape (desktop/web) keeps the original
+# sizes throughout.
+const FS_STAT_LANDSCAPE := 28        # streak / survived
+const FS_STAT_PORTRAIT := 34
+const FS_RECORD_LANDSCAPE := 24      # the one supporting line for the score
+const FS_RECORD_PORTRAIT := 28
 const FS_BUTTON := 28
+
+func _fs_stat() -> int:
+	return FS_STAT_PORTRAIT if Layout.is_portrait() else FS_STAT_LANDSCAPE
+
+func _fs_record() -> int:
+	return FS_RECORD_PORTRAIT if Layout.is_portrait() else FS_RECORD_LANDSCAPE
 # Fixed so every row is the same overall width regardless of its own caption
 # or value length - sized to fit the longest caption that can appear,
 # "PREVIOUS BEST (Hardcore)" at FS_RECORD. That string actually measures 307px
@@ -48,8 +65,10 @@ const STAT_ROW_SEPARATION := 16.0
 # column with the type scale put the row at 834 of a 900-unit canvas - caption
 # jammed against the left edge, value against the right, the better part of a
 # screen apart - so in portrait the column is set from the canvas instead. Type
-# size is unaffected; only how far the two halves sit from each other.
-const STAT_COLUMN_CANVAS_FRACTION := 0.36
+# size is unaffected; only how far the two halves sit from each other. Widened
+# 0.36 -> 0.42 alongside the FS_STAT/FS_RECORD portrait bump above, so the
+# longer captions still fit at the bigger font.
+const STAT_COLUMN_CANVAS_FRACTION := 0.42
 
 func _stat_column_width() -> float:
 	if Layout.is_portrait():
@@ -566,7 +585,7 @@ func _build() -> void:
 
 	# Read a size smaller than the two below it - it's the mark this run is
 	# measured against, not one of the two things the run itself did.
-	var record_parts := _build_stat_row("BEST", FS_RECORD)
+	var record_parts := _build_stat_row("BEST", _fs_record())
 	_record_row = record_parts[0]
 	_record_caption = record_parts[1]
 	_record_label = record_parts[2]
@@ -578,16 +597,19 @@ func _build() -> void:
 		label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.6))
 		label.add_theme_constant_override("outline_size", 3)
 	# Legitimately blank on a first-ever run - see _show_summary - so the row's
-	# height is reserved explicitly rather than left to its (empty) text.
-	_record_row.custom_minimum_size = Vector2(0, 30) * _s()
+	# height is reserved explicitly rather than left to its (empty) text. Base
+	# bumped 30 -> 36 in portrait alongside the FS_RECORD font increase, so the
+	# taller glyphs aren't clipped.
+	var record_row_h: float = 36.0 if Layout.is_portrait() else 30.0
+	_record_row.custom_minimum_size = Vector2(0, record_row_h) * _s()
 	stats_col.add_child(_record_row)
 
-	var streak_parts := _build_stat_row("BEST STREAK")
+	var streak_parts := _build_stat_row("BEST STREAK", _fs_stat())
 	_streak_row = streak_parts[0]
 	_streak_label = streak_parts[2]
 	stats_col.add_child(_streak_row)
 
-	var time_parts := _build_stat_row("SURVIVED")
+	var time_parts := _build_stat_row("SURVIVED", _fs_stat())
 	_time_row = time_parts[0]
 	_time_label = time_parts[2]
 	stats_col.add_child(_time_row)
@@ -600,8 +622,10 @@ func _build() -> void:
 	_button_row.add_theme_constant_override("separation", _fs(24))
 	_button_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	# Reserve the row's height up front - the buttons don't exist until the
-	# reveal finishes, and the column must not jump when they arrive.
-	_button_row.custom_minimum_size = Vector2(0, 84) * _s()
+	# reveal finishes, and the column must not jump when they arrive. Matches
+	# PORTRAIT_BUTTON_SIZE.y (140) in portrait now that _button() sizes itself
+	# directly there rather than through _s(); landscape keeps the old 84.
+	_button_row.custom_minimum_size = Vector2(0, 140) if Layout.is_portrait() else Vector2(0, 84) * _s()
 	col.add_child(_button_row)
 
 	# On top of everything else (self, not `col`) so the record flourish's wash
@@ -674,7 +698,7 @@ func _on_retry() -> void:
 # value happens to be; without that, a row's width would vary with its
 # content and the whole block would no longer centre consistently under the
 # score above it.
-func _build_stat_row(caption_text: String, font_size: int = FS_STAT) -> Array:
+func _build_stat_row(caption_text: String, font_size: int = FS_STAT_LANDSCAPE) -> Array:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", int(STAT_ROW_SEPARATION))
 
@@ -703,14 +727,43 @@ func _label(text: String, font_size: int, accent: Color) -> Label:
 # `flat` drops the lit-panel treatment for bare outlined text that only
 # becomes a visible button under the cursor - the same de-emphasis
 # StageResultScreen gives BACK TO TITLE, for the same reason.
+# Portrait: matches PauseMenu's own SECONDARY-with-glow button exactly - same
+# 380x140 size, same font size (34), same lit-panel-with-glow style - a user
+# request to have RETRY/BACK TO TITLE look and size the same as that screen's
+# RESTART/OPTIONS/BACK TO TITLE row. `flat`'s accent (MUTED) is the same hex as
+# PauseMenu.GREY, so BACK TO TITLE already reads as the same colour too - only
+# the accent differs between the two buttons here, same as it does there.
+# Landscape (desktop/web) is untouched, keeping its own smaller three-tier look.
+const PORTRAIT_BUTTON_SIZE := Vector2(380, 140)
+const PORTRAIT_BUTTON_FONT := 46  # bumped by a lot on a further user request
+
 func _button(text: String, accent: Color, flat: bool = false) -> Button:
 	var button := Button.new()
 	button.text = text
 	PressFeedback.apply(button)
 
+	if Layout.is_portrait():
+		# Full brightness (white text, full-alpha border) rather than the
+		# blended/fainter look this first had - a user-reported issue where
+		# these still read visibly darker than PauseMenu's RESUME despite
+		# having a glow added on top of the darker fill underneath it.
+		button.custom_minimum_size = PORTRAIT_BUTTON_SIZE
+		button.add_theme_font_size_override("font_size", PORTRAIT_BUTTON_FONT)
+		button.add_theme_color_override("font_color", Color.WHITE)
+		button.add_theme_color_override("font_outline_color", accent)
+		button.add_theme_constant_override("outline_size", 4)
+		button.add_theme_stylebox_override("normal", _box(accent, 0.85, 3, 0.35, 8))
+		button.add_theme_stylebox_override("hover", _box(accent, 0.7, 3, 0.5, 12))
+		button.add_theme_stylebox_override("pressed", _box(accent, 0.6, 3, 0.4, 6))
+		return button
+
+	# 76/54 raw, landscape only (desktop/web, no dp minimum to clear).
+	var primary_h: float = 76.0
+	var flat_h: float = 54.0
+
 	if flat:
-		button.custom_minimum_size = Vector2(200, 54) * _s()
-		button.add_theme_font_size_override("font_size", FS_RECORD)
+		button.custom_minimum_size = Vector2(200, flat_h) * _s()
+		button.add_theme_font_size_override("font_size", FS_RECORD_LANDSCAPE)
 		button.add_theme_color_override("font_color", accent)
 		button.add_theme_color_override("font_hover_color", TEXT_FILL)
 		button.add_theme_color_override("font_pressed_color", TEXT_FILL)
@@ -719,7 +772,7 @@ func _button(text: String, accent: Color, flat: bool = false) -> Button:
 		button.add_theme_stylebox_override("hover", _box(accent, 0.88, 0))
 		button.add_theme_stylebox_override("pressed", _box(accent, 0.8, 0))
 	else:
-		button.custom_minimum_size = Vector2(240, 76) * _s()
+		button.custom_minimum_size = Vector2(240, primary_h) * _s()
 		button.add_theme_font_size_override("font_size", FS_BUTTON)
 		button.add_theme_color_override("font_color", Color.WHITE)
 		button.add_theme_color_override("font_outline_color", accent)
@@ -733,13 +786,18 @@ func _button(text: String, accent: Color, flat: bool = false) -> Button:
 # `border_width` 0 plus a fully-transparent fill is what makes a flat,
 # invisible box for the tertiary state - content margins still apply, so the
 # label keeps the same padding as a real button and the row doesn't shift.
-func _box(accent: Color, darken: float, border_width: int = 3) -> StyleBoxFlat:
+func _box(accent: Color, darken: float, border_width: int = 3,
+		shadow_alpha: float = 0.0, shadow_size: int = 0) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(accent.darkened(darken), 0.0 if darken >= 1.0 else 1.0)
 	sb.set_corner_radius_all(12)
 	sb.set_border_width_all(border_width)
 	sb.border_color = Color(accent.r, accent.g, accent.b, 0.0 if border_width == 0 else 1.0)
 	sb.set_content_margin_all(12)
+	if shadow_alpha > 0.0:
+		sb.shadow_color = Color(accent.r, accent.g, accent.b, shadow_alpha)
+		sb.shadow_size = shadow_size
+		sb.shadow_offset = Vector2.ZERO
 	return sb
 
 # Same fading hairline StageResultScreen uses - centre-bright, transparent at

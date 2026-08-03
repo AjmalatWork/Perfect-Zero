@@ -57,9 +57,11 @@ const PORTRAIT_TITLE_OUTLINE := 24
 # 280-wide buttons side by side without them reading as cramped, and a stacked
 # pair is the easier one-handed target anyway.
 const PRIMARY_SIZE_LANDSCAPE := Vector2(280, 84)
-const PRIMARY_SIZE_PORTRAIT := Vector2(520, 112)
+# Height was 112 (~44.8dp) - just under Android's 48dp minimum. Bumped to 128
+# (~51.2dp); landscape (desktop/web) is unaffected.
+const PRIMARY_SIZE_PORTRAIT := Vector2(520, 128)
 const PRIMARY_FS_LANDSCAPE := 36
-const PRIMARY_FS_PORTRAIT := 44
+const PRIMARY_FS_PORTRAIT := 56  # bumped by a lot on a further user request
 
 # 64 units is 26dp - well under the 48dp minimum, and the one place on this
 # screen where that was worth fixing while rearranging anyway. 132 units is 53dp.
@@ -313,10 +315,16 @@ func _confirm_button(text: String, accent: Color) -> Button:
 	var s := _prompt_scale()
 	var button := Button.new()
 	button.text = text
-	# 200x64 matches every other screen's BACK button in landscape.
-	button.custom_minimum_size = Vector2(200, 64) * s
+	# 200x64 matches every other screen's BACK button in landscape. 64 raw is
+	# only ~41dp effective at this prompt's 1.6 portrait scale - under Android's
+	# 48dp minimum. Bumped to 76 (~48.6dp) in portrait only; landscape (desktop/
+	# web, where _prompt_scale() is 1.0) keeps the original 64.
+	var h: float = 76.0 if Layout.is_portrait() else 64.0
+	button.custom_minimum_size = Vector2(200, h) * s
 	_style_button(button, accent)
-	button.add_theme_font_size_override("font_size", roundi(26 * s))
+	# Base bumped 26 -> 34 by a lot on a further user request; still scaled by
+	# the same _prompt_scale() as everything else on this prompt.
+	button.add_theme_font_size_override("font_size", roundi(34 * s))
 	PressFeedback.apply(button)
 	return button
 

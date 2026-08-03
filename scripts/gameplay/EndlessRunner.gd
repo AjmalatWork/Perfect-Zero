@@ -52,10 +52,16 @@ const PORTRAIT_CELL_SIZE := 200.0
 const LANDSCAPE_GRID_SEPARATION := 14
 const PORTRAIT_GRID_SEPARATION := 20
 
-# The zone the grid is centred inside. Landscape centres it in the whole canvas;
-# portrait pulls it off dead-centre to leave the lower third for the powerup row
-# (see PowerupBar), keeping both inside one-handed thumb reach.
-const PORTRAIT_GRID_ZONE := Rect2(0.0, 380.0, 900.0, 720.0)
+# The zone the grid is centred inside. Landscape centres it in the whole canvas.
+# Portrait used to pull it off dead-centre to leave room below for the powerup
+# row, but a user request moved the centre timer to the true centre of the
+# (now dynamically-sized, see Layout._compute_portrait_size) screen instead -
+# only the SIZE below is still fixed; the position is computed at runtime in
+# _apply_board_metrics() from the real canvas height, so the zone's own
+# vertical centre always lands on Layout.canvas_size.y * 0.5. The powerup row
+# moved down to sit just above the fail-cross row at the bottom instead (see
+# PowerupBar._build()).
+const PORTRAIT_GRID_ZONE_SIZE := Vector2(900.0, 720.0)
 
 const BLACKOUT_VALUE_MIN := 7.0  # Blackout's own fixed start_time range -
 const BLACKOUT_VALUE_MAX := 8.0  # constant regardless of elapsed_time
@@ -444,8 +450,12 @@ func _apply_board_metrics() -> void:
 	var zone := grid_container.get_parent() as Control
 	if zone != null:
 		if Layout.is_portrait():
-			zone.position = PORTRAIT_GRID_ZONE.position
-			zone.size = PORTRAIT_GRID_ZONE.size
+			var zone_size := PORTRAIT_GRID_ZONE_SIZE
+			# Centred on the real screen centre rather than a fixed offset - see
+			# the const's own comment above for why this changed from a fixed
+			# Rect2.
+			zone.position = Vector2(0.0, Layout.canvas_size.y * 0.5 - zone_size.y * 0.5)
+			zone.size = zone_size
 		else:
 			zone.position = Vector2.ZERO
 			zone.size = Layout.LANDSCAPE_SIZE

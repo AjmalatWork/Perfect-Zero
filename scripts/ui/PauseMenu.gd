@@ -5,10 +5,31 @@ class_name PauseMenu
 # freeze everything (timers + tick audio + Endless spawning). This node runs with
 # PROCESS_MODE_ALWAYS so it stays interactive while the rest of the tree is frozen.
 
+# 64 units is 26dp - well under Android's 48dp minimum. Grown to 120 (48dp) in
+# portrait only; landscape is desktop/web with a mouse, where dp minimums don't
+# apply, so it keeps its original size.
+const PAUSE_ICON_SIZE_PORTRAIT := Vector2(120, 120)
+const PAUSE_ICON_SIZE_LANDSCAPE := Vector2(64, 64)
+# Bumped from 24 (a user request): a phone's top-right corner is physically
+# rounded, and a generic rounded-corner radius isn't reported by
+# DisplayServer.get_display_safe_area() the way a notch/cutout is (SafeArea
+# only adds its own inset on top of this baseline for those) - so the extra
+# margin here is a deliberate cushion against the corner curve itself, not
+# something a safe-area API can compute for us.
+const PAUSE_ICON_TOP_MARGIN_PORTRAIT := 40.0
+const PAUSE_ICON_RIGHT_MARGIN_PORTRAIT := 32.0
+
+func _pause_button_size() -> Vector2:
+	return PAUSE_ICON_SIZE_PORTRAIT if Layout.is_portrait() else PAUSE_ICON_SIZE_LANDSCAPE
+
 # Authored (inset-free) position; _apply_safe_area() offsets from this.
 # Authored (inset-free) corner position; _apply_safe_area() offsets from this.
 # A function rather than a const now that the canvas it hangs off transposes.
 func _pause_button_pos() -> Vector2:
+	if Layout.is_portrait():
+		var size := _pause_button_size()
+		return Vector2(Layout.canvas_size.x - PAUSE_ICON_RIGHT_MARGIN_PORTRAIT - size.x,
+			PAUSE_ICON_TOP_MARGIN_PORTRAIT)
 	return Vector2(Layout.canvas_size.x - 92, 28)
 const NEON := Color("22d3ff")
 const RED := Color("ff2e5e")
@@ -227,7 +248,7 @@ func _build() -> void:
 	# bars rather than a "❚❚" text glyph - some exported builds' bundled font
 	# (notably HTML5/Web) lacks that Unicode character and shows tofu boxes.
 	_pause_button = _button("", GREY)
-	_pause_button.custom_minimum_size = Vector2(64, 64)
+	_pause_button.custom_minimum_size = _pause_button_size()
 	_pause_button.position = _pause_button_pos()
 	_pause_button.pressed.connect(pause)
 	add_child(_pause_button)
@@ -279,24 +300,55 @@ func _build() -> void:
 	# everywhere else in the game, rather than gold, which now specifically
 	# means "the outcome" elsewhere and had no business describing a restart).
 	# OPTIONS and BACK TO TITLE don't touch the run at all - both are "go
-	# somewhere else" detours - so they're demoted into one small, quiet row.
-	col.add_child(_menu_button("RESUME", NEON, resume, Emphasis.PRIMARY, 32, Vector2(380, 84), true))
+	# somewhere else" detours.
+	#
+	# In portrait, all four now share RESUME's own footprint and sit in one
+	# column rather than OPTIONS/BACK TO TITLE being demoted into a small side-
+	# by-side row - a user request on top of the touch-target pass that grew
+	# them individually, since a shared size reads more consistent than four
+	# still-different-sized buttons stacked together. Landscape (desktop/web,
+	# mouse-driven) keeps the original three-tier layout and sizes untouched.
+	var touch := Layout.is_portrait()
+	var uniform_size := Vector2(380, 140)
+	# Font sizes bumped by a lot on a further user request (RESUME 40->52,
+	# RESTART 38->50, OPTIONS/BACK TO TITLE 34->48) - landscape (desktop/web)
+	# sizes are untouched.
+	col.add_child(_menu_button("RESUME", NEON, resume, Emphasis.PRIMARY, 52 if touch else 32,
+		uniform_size if touch else Vector2(380, 84), true))
 	col.add_child(_spacer(36))
-	col.add_child(_menu_button("RESTART", NEON, _on_restart, Emphasis.SECONDARY, 28, Vector2(320, 68)))
+	col.add_child(_menu_button("RESTART", NEON, _on_restart, Emphasis.SECONDARY, 50 if touch else 28,
+		uniform_size if touch else Vector2(320, 68), touch))
 	col.add_child(_spacer(36))
 
-	var detour_row := HBoxContainer.new()
-	detour_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	detour_row.add_theme_constant_override("separation", 20)
-	var options_btn := _button("OPTIONS", NEON, Emphasis.TERTIARY, 22, Vector2(190, 54))
-	options_btn.pressed.connect(_open_options)
-	_menu_buttons.append(options_btn)
-	detour_row.add_child(options_btn)
-	var title_btn := _button("BACK TO TITLE", GREY, Emphasis.TERTIARY, 22, Vector2(190, 54))
-	title_btn.pressed.connect(_on_title)
-	_menu_buttons.append(title_btn)
-	detour_row.add_child(title_btn)
-	col.add_child(detour_row)
+	if touch:
+		# Same SECONDARY box style RESTART uses (lit panel, not the near-
+		# invisible TERTIARY treatment) - a user request on top of the earlier
+		# touch-target sizing pass. `glow: true` on all three gives them the
+		# same lit look RESUME has, per a further user request.
+		col.add_child(_menu_button("OPTIONS", NEON, _open_options, Emphasis.SECONDARY, 48, uniform_size, true))
+		col.add_child(_spacer(36))
+		var title_wrap := _menu_button("BACK TO TITLE", GREY, _on_title, Emphasis.SECONDARY, 48, uniform_size, true)
+		col.add_child(title_wrap)
+		# SECONDARY normally blends font_color toward TEXT_FILL (accent.lerp(...,
+		# 0.5)), which would leave the box a purer grey than the text sitting on
+		# it - overridden back to plain GREY so the box and its text read as the
+		# exact same colour, per the user's request.
+		var title_button := title_wrap.get_child(0) as Button
+		title_button.add_theme_color_override("font_color", GREY)
+	else:
+		var detour_row := HBoxContainer.new()
+		detour_row.alignment = BoxContainer.ALIGNMENT_CENTER
+		detour_row.add_theme_constant_override("separation", 20)
+		var detour_size := Vector2(190, 54)
+		var options_btn := _button("OPTIONS", NEON, Emphasis.TERTIARY, 22, detour_size)
+		options_btn.pressed.connect(_open_options)
+		_menu_buttons.append(options_btn)
+		detour_row.add_child(options_btn)
+		var title_btn := _button("BACK TO TITLE", GREY, Emphasis.TERTIARY, 22, detour_size)
+		title_btn.pressed.connect(_on_title)
+		_menu_buttons.append(title_btn)
+		detour_row.add_child(title_btn)
+		col.add_child(detour_row)
 
 	# Options overlay (reuses OptionsPanel; closes back to the pause menu).
 	_options = preload("res://scenes/OptionsPanel.tscn").instantiate()
@@ -306,8 +358,9 @@ func _build() -> void:
 	add_child(_options)
 
 func _build_pause_icon(button: Button) -> void:
-	var bar_size := Vector2(8, 22)
-	var gap := 8.0
+	var portrait := Layout.is_portrait()
+	var bar_size := Vector2(14, 40) if portrait else Vector2(8, 22)
+	var gap := 14.0 if portrait else 8.0
 	var total_w := bar_size.x * 2 + gap
 	var center := button.custom_minimum_size * 0.5
 	for i in range(2):
@@ -367,12 +420,33 @@ func _button(text: String, accent: Color, emphasis: int = Emphasis.PRIMARY,
 
 	match emphasis:
 		Emphasis.SECONDARY:
-			button.add_theme_font_size_override("font_size", font_size)
-			button.add_theme_color_override("font_color", accent.lerp(TEXT_FILL, 0.5))
-			button.add_theme_constant_override("outline_size", 0)
-			button.add_theme_stylebox_override("normal", _box(accent, 0.93, 0.0, 2, 0.55))
-			button.add_theme_stylebox_override("hover", _box(accent, 0.82, 0.3, 2, 0.9))
-			button.add_theme_stylebox_override("pressed", _box(accent, 0.72, 0.25, 2, 0.9))
+			if glow:
+				# Full PRIMARY-equivalent brightness (white text, full-alpha
+				# border, same darken/shadow numbers as RESUME below) - a
+				# user-reported issue with the first glow pass, which added a
+				# shadow on top of SECONDARY's own darker fill/blended text/
+				# fainter border and still read visibly darker than RESUME
+				# despite "glowing". This tier now looks identical to PRIMARY;
+				# only the accent colour (and BACK TO TITLE's font_color
+				# override in _build(), applied after this returns) tells them
+				# apart.
+				button.add_theme_font_size_override("font_size", font_size)
+				button.add_theme_color_override("font_color", Color.WHITE)
+				button.add_theme_color_override("font_outline_color", accent)
+				button.add_theme_constant_override("outline_size", 4)
+				button.add_theme_stylebox_override("normal", _box(accent, 0.85, 0.35, 3, 1.0, 8))
+				button.add_theme_stylebox_override("hover", _box(accent, 0.7, 0.5, 3, 1.0, 12))
+				button.add_theme_stylebox_override("pressed", _box(accent, 0.6, 0.4, 3, 1.0, 6))
+			else:
+				# Original, deliberately quieter look for a non-glow SECONDARY
+				# button (no current caller uses this path in this file, kept
+				# for the emphasis system's own sake).
+				button.add_theme_font_size_override("font_size", font_size)
+				button.add_theme_color_override("font_color", accent.lerp(TEXT_FILL, 0.5))
+				button.add_theme_constant_override("outline_size", 0)
+				button.add_theme_stylebox_override("normal", _box(accent, 0.93, 0.0, 2, 0.55))
+				button.add_theme_stylebox_override("hover", _box(accent, 0.82, 0.3, 2, 0.9))
+				button.add_theme_stylebox_override("pressed", _box(accent, 0.72, 0.25, 2, 0.9))
 		Emphasis.TERTIARY:
 			button.add_theme_font_size_override("font_size", font_size)
 			button.add_theme_color_override("font_color", accent)

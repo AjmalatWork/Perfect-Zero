@@ -133,7 +133,11 @@ func _build() -> void:
 	# buttons' own 420x76 - _button() is shared with those, so the size is
 	# overridden after creation here.
 	var back := _button("BACK", NEON)
-	back.custom_minimum_size = Vector2(200, 64) * _s()
+	# 64 raw is only ~43.5dp effective at this screen's 1.7 scale - just under
+	# Android's 48dp minimum. Bumped to 72 (~49dp) in portrait only; landscape
+	# (desktop/web) keeps the original 64.
+	var back_h: float = 72.0 if Layout.is_portrait() else 64.0
+	back.custom_minimum_size = Vector2(200, back_h) * _s()
 	back.pressed.connect(_on_back)
 	col.add_child(_wrap(back))
 
