@@ -113,10 +113,12 @@ func _big_score_moment(intensity: float) -> void:
 	Juice.shake(Juice.ShakeProfile.DECAY, lerp(0.7, 1.4, intensity))
 	Juice.hit_stop()
 
-	# Warm edge flash.
-	flash_rect.color = Color(1.0, 0.5, 0.1, lerp(0.2, 0.4, intensity))
-	var flash_tween := create_tween()
-	flash_tween.tween_property(flash_rect, "color:a", 0.0, 0.4)
+	# Warm edge flash. A full-screen wash, so it's gated outright like every
+	# other one - see Settings.motion_effects_enabled()'s own doc.
+	if Settings.motion_effects_enabled():
+		flash_rect.color = Color(1.0, 0.5, 0.1, lerp(0.2, 0.4, intensity))
+		var flash_tween := create_tween()
+		flash_tween.tween_property(flash_rect, "color:a", 0.0, 0.4)
 
 	_pop_score_label(intensity)
 	AudioManager.play_big_score(intensity)
@@ -151,6 +153,9 @@ func _pop_multiplier_label() -> void:
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 func _on_timer_expired(_source: Node, _grade: String) -> void:
+	# Full-screen red wash - gated the same as the big-score flash above.
+	if not Settings.motion_effects_enabled():
+		return
 	flash_rect.color = Color(1, 0, 0, 0.4)
 	var tween := create_tween()
 	tween.tween_property(flash_rect, "color:a", 0.0, 0.4)
