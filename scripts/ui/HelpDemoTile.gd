@@ -564,6 +564,21 @@ func play_blur(duration: float) -> void:
 # practising a PERFECT here is practising the same 0.05s the board asks for,
 # not a lookalike with its own boundaries.
 #
+# Practice mode does NOT make every tile tick at once. The header's rule still
+# holds: a tile sits idle showing its name until it is tapped, that first tap
+# starts its run, and only then is it live and stoppable. Everything else on
+# the page stays idle. So the fix recorded up there - one focused animation per
+# tap, after six simultaneous ones were reported as making it hard to tell
+# where to even look - survives practice mode rather than being undone by it.
+# The only thing that changes is who stops the running tile: the player, over
+# and over, instead of a script tapping it once at a pre-chosen moment.
+#
+# That the STARTING tap cannot also resolve the run it just started falls out
+# of the _tap_pressed guard for free: at the moment that tap's release lands,
+# _awaiting_tap is still false (no run yet), so nothing is consumed, and
+# _begin_tappable_run() then clears the flag anyway. Worth knowing before
+# anyone decides that guard looks redundant.
+#
 # Each of these is ONE run: it resolves, plays the same feedback a real stop
 # gets, and returns its grade rather than looping. Restart policy is
 # deliberately left to the host, because it differs by page - page 1 restarts
@@ -575,6 +590,18 @@ func play_blur(duration: float) -> void:
 # a new play_*() call bumped the token). Callers MUST check for that before
 # treating the result as a grade - an empty string is not a valid grade and
 # will not match any branch of ScoreManager.grade_color()/play_grade().
+
+# True while a run is live and waiting for the player's stop. Hosts branch on
+# this to tell a "start this tile's practice loop" tap from a "this tap IS the
+# stop" one, both of which arrive as the same `tapped` signal. A host that
+# restarted on every `tapped` would cancel the very run the player was trying
+# to stop, and would do it on the exact frame their timing mattered most.
+#
+# Exposed rather than left to the host to track alongside its own idea of
+# which tile is running: that second copy would have to be kept in step with
+# every cancel/idle/rebuild path in here, and the one that matters is this one.
+func is_practice_run_active() -> bool:
+	return _awaiting_tap
 
 func _begin_tappable_run() -> void:
 	_clear_tap_capture()
