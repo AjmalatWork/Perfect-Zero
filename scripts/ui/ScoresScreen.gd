@@ -121,9 +121,16 @@ var _endless_accents: Array[Color]:
 const SWIPE_TAP_SLOP := 14.0
 const SWIPE_COMMIT_RATIO := 0.18
 
-const HERO_DOT_SIZE := 8.0
-const HERO_DOT_ACTIVE_WIDTH := 22.0
-const HERO_DOT_ROW_HEIGHT := 20.0
+# Borrowed from HelpScreen rather than re-declared - one page-dot component, one
+# definition, the same cross-screen reuse as LevelSelect.AllPerfectMark below.
+# These used to be this screen's own 8/22/20, which at its 1.2 scale rendered at
+# 9.6/26.4/24 against Help's 15/39/42 - the same indicator at two noticeably
+# different sizes. See HelpScreen's own comment for why the geometry is now held
+# in absolute canvas units instead of being scaled per-screen.
+const HERO_DOT_SIZE := HelpScreen.DOT_SIZE
+const HERO_DOT_ACTIVE_WIDTH := HelpScreen.DOT_ACTIVE_WIDTH
+const HERO_DOT_ROW_HEIGHT := HelpScreen.DOT_ROW_HEIGHT
+const HERO_DOT_SEPARATION := HelpScreen.DOT_SEPARATION
 
 var _hero_frame: PanelContainer
 var _hero_area: Control
@@ -579,12 +586,12 @@ func _hero_end_drag(pos: Vector2) -> void:
 func _build_hero_dot_row() -> Control:
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", _fs(8))
-	row.custom_minimum_size = Vector2(0, HERO_DOT_ROW_HEIGHT * _s())
+	row.add_theme_constant_override("separation", HERO_DOT_SEPARATION)
+	row.custom_minimum_size = Vector2(0, HERO_DOT_ROW_HEIGHT)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	for i in range(2):
 		var dot := Panel.new()
-		dot.custom_minimum_size = Vector2(HERO_DOT_SIZE, HERO_DOT_SIZE) * _s()
+		dot.custom_minimum_size = Vector2(HERO_DOT_SIZE, HERO_DOT_SIZE)
 		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(dot)
@@ -609,9 +616,9 @@ func _style_hero_dots() -> void:
 		var accent: Color = _endless_accents[i]
 		var sb := StyleBoxFlat.new()
 		sb.bg_color = accent if active else Color(MUTED.r, MUTED.g, MUTED.b, 0.4)
-		sb.set_corner_radius_all(roundi(HERO_DOT_SIZE * _s() * 0.5))
+		sb.set_corner_radius_all(roundi(HERO_DOT_SIZE * 0.5))
 		dot.add_theme_stylebox_override("panel", sb)
-		var target_w: float = (HERO_DOT_ACTIVE_WIDTH if active else HERO_DOT_SIZE) * _s()
+		var target_w: float = HERO_DOT_ACTIVE_WIDTH if active else HERO_DOT_SIZE
 		if not animate:
 			dot.custom_minimum_size.x = target_w
 			continue

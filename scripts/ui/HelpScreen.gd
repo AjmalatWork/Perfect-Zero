@@ -122,9 +122,26 @@ const PROMPT_HEIGHT := 30.0
 # tabs optional rather than required. Kept as an indicator rather than a control:
 # a tappable dot would need a 120-unit (48dp) hit box, and the vertical budget
 # for that does not exist on this screen.
-const DOT_ROW_HEIGHT := 28.0
-const DOT_SIZE := 10.0
-const DOT_ACTIVE_WIDTH := 26.0
+# Absolute canvas units, deliberately NOT multiplied by _s() - the same call
+# OptionsPanel._content_width() makes, for the same class of reason. These dots
+# are a fixed-size indicator component, not type: they carry no text and their
+# job (mark position in a short strip) doesn't get harder or easier with the
+# surrounding type scale.
+#
+# Scaling them per-screen is what pulled the identical component apart. The raw
+# constants were close and plausibly deliberate - 10 here, 8 on Scores - but
+# this screen scales by 1.5 and Scores by 1.2, so the EFFECTIVE portrait sizes
+# came out 15 and 9.6: a 56% difference nobody actually chose, from a 25%
+# difference someone maybe did. Held absolute, the two match by construction and
+# cannot drift again.
+#
+# ScoresScreen references these directly rather than declaring its own pair -
+# same cross-screen reuse as LevelSelect.AllPerfectMark, and for the same
+# reason: one component, one definition, so the two screens can never disagree.
+const DOT_ROW_HEIGHT := 40.0
+const DOT_SIZE := 14.0
+const DOT_ACTIVE_WIDTH := 36.0
+const DOT_SEPARATION := 12
 
 # How far a drag has to travel before it stops counting as a tap on whatever
 # tile it started on, and how far before releasing commits to a page change.
@@ -500,12 +517,12 @@ func _build_tab_row() -> Control:
 func _build_dot_row() -> Control:
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", _fs(10))
-	row.custom_minimum_size = Vector2(0, DOT_ROW_HEIGHT * _s())
+	row.add_theme_constant_override("separation", DOT_SEPARATION)
+	row.custom_minimum_size = Vector2(0, DOT_ROW_HEIGHT)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	for i in range(PAGE_COUNT):
 		var dot := Panel.new()
-		dot.custom_minimum_size = Vector2(DOT_SIZE, DOT_SIZE) * _s()
+		dot.custom_minimum_size = Vector2(DOT_SIZE, DOT_SIZE)
 		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(dot)
@@ -531,9 +548,9 @@ func _style_dots() -> void:
 		var active := i == _page_index
 		var sb := StyleBoxFlat.new()
 		sb.bg_color = NEON if active else Color(MUTED.r, MUTED.g, MUTED.b, 0.45)
-		sb.set_corner_radius_all(roundi(DOT_SIZE * _s() * 0.5))
+		sb.set_corner_radius_all(roundi(DOT_SIZE * 0.5))
 		dot.add_theme_stylebox_override("panel", sb)
-		var target_w: float = (DOT_ACTIVE_WIDTH if active else DOT_SIZE) * _s()
+		var target_w: float = DOT_ACTIVE_WIDTH if active else DOT_SIZE
 		if not animate:
 			dot.custom_minimum_size.x = target_w
 			continue

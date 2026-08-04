@@ -51,13 +51,24 @@ func _ready() -> void:
 # A base-level fallback behind every screen: on a device whose aspect ratio
 # doesn't match the fixed canvas, this is what used to show as the engine's
 # raw default_clear_color in the letterbox bands, with a visible seam against
-# whatever a given screen paints inside the canvas. Matches that same clear
-# colour exactly (rather than introducing a new tone) so it's a pure gap-fill,
-# not a new visual decision - individual screens with their own dim/backdrop
-# already extend to override this via ScreenLayout.cover() where they exist.
+# whatever a given screen paints inside the canvas. Still matches the clear
+# colour exactly (rather than introducing a new tone) so it stays a pure
+# gap-fill - individual screens with their own dim/backdrop already extend to
+# override this via ScreenLayout.cover() where they exist.
+#
+# Both this AND project.godot's default_clear_color are now the same
+# Color(0.03, 0.03, 0.05) every screen's own backdrop uses, rather than the
+# slightly lighter 0.043137 pair they shared before. The old value was invisible
+# during a cross-fade (~1/255 at the midpoint, computed) but it was NOT
+# invisible during gameplay: PLAYING and ENDLESS_PLAYING paint no full-bleed
+# backdrop of their own, so this rect is the live background for the entire
+# screen while a stage is running - which meant the background stepped very
+# slightly lighter every time the player left a menu and entered a board, and
+# again in reverse on the way out. One value everywhere removes that step. Well
+# inside GDD §2's "near-black (#0a0a11-ish)" either way.
 func _build_background() -> void:
 	_background = ColorRect.new()
-	_background.color = Color(0.043137, 0.043137, 0.070588)
+	_background.color = Color(0.03, 0.03, 0.05)
 	_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_background)
 	move_child(_background, 0)
