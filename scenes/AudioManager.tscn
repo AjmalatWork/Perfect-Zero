@@ -4,3 +4,5 @@
 
 [node name="AudioManager" type="Node" unique_id=1064353901]
 script = ExtResource("1_audio")
+menu_music_first_play_start_sec = 10.0
+menu_music_first_play_fade_sec = 1.0
