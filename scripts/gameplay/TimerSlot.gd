@@ -198,6 +198,14 @@ var paused_for: float = 0.0
 var stopped: bool = false
 var speed_boost_stacks: int = 0  # +1 per Red reaction; also drives Golden's blur speed
 var has_triggered_spawn: bool = false  # Endless: latched once this timer crosses the spawn threshold
+# Latched alongside the faded_out signal, for waiters that poll rather than
+# await it (see EndlessRunner._free_cell_after_delay, which has to survive the
+# slot being freed out from under it without the signal ever firing). Plain
+# state on the slot rather than a flag the waiter keeps for itself: a local
+# captured by a lambda is copied by value in GDScript, so writing it from a
+# signal handler updates the lambda's copy and leaves the waiter's own
+# variable false forever.
+var has_faded_out: bool = false
 var _tick_accumulator: float = 0.0
 var _panel_style: StyleBoxFlat
 var _accent: Color
@@ -632,6 +640,7 @@ func _begin_post_stop_fade() -> void:
 	await tween.finished
 	if not is_instance_valid(self):
 		return
+	has_faded_out = true
 	faded_out.emit()
 
 func _spawn_grade_sign(grade: String) -> void:
