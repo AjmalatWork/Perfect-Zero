@@ -313,6 +313,7 @@ func idle() -> void:
 	if _grade_sign != null and is_instance_valid(_grade_sign):
 		_grade_sign.queue_free()
 	scale = Vector2.ONE
+	set_focus_lifted(false)
 	set_selected(false)
 
 # Stops whatever play_*() coroutine is currently running without resetting the
@@ -653,6 +654,18 @@ func play_blur(duration: float) -> void:
 # every cancel/idle/rebuild path in here, and the one that matters is this one.
 func is_practice_run_active() -> bool:
 	return _awaiting_tap
+
+# Raised above the host's full-screen focus dim while this tile is the one
+# being practised, so that dim can cover the whole screen without covering the
+# very thing it exists to focus attention on.
+#
+# Must stay BELOW the caption's own z (HelpScreen sets that to 10) - the
+# caption is anchored beside the tile it describes and has to read over it
+# where the two meet.
+const FOCUS_Z_INDEX := 5
+
+func set_focus_lifted(on: bool) -> void:
+	z_index = FOCUS_Z_INDEX if on else 0
 
 func _begin_tappable_run() -> void:
 	# The previous run's grade flash may still be animating bg_color/shadow_size

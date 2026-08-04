@@ -297,6 +297,28 @@ func _side_margin() -> int:
 	return 40 if Layout.is_portrait() else 80
 
 var _backdrop: ColorRect
+
+# --- Focus dim ----------------------------------------------------------------
+# A real full-canvas overlay, up for as long as a caption is. Everything the
+# player is not currently being shown sits under it; the tile being practised
+# and its caption are lifted over it by z_index (HelpDemoTile.FOCUS_Z_INDEX = 5
+# and _caption.z_index = 10 respectively, both above this rect's own 0).
+#
+# The per-tile fade in HelpDemoTile.set_dimmed() used to carry this alone, and
+# it only ever darkened the other TILES - the heading, the tab row, the page
+# dots and BACK all stayed at full brightness, so "the rest of the screen"
+# was never actually dimmed. That fade stays (it separates the other tiles from
+# the focused one INSIDE the lit area) and this sits over the rest.
+#
+# MOUSE_FILTER_IGNORE, deliberately: dismissal is already owned by _end_drag's
+# tap-anywhere branch, and the tiles this covers are set MOUSE_FILTER_IGNORE by
+# their own set_dimmed(true) anyway. Making the rect itself STOP would put the
+# question of whether Godot's GUI picking honours z_index on the critical path
+# of the player being able to stop the tile they are looking at.
+const FOCUS_DIM_COLOR := Color(0.0, 0.0, 0.0, 0.72)
+const FOCUS_DIM_FADE := 0.18
+var _focus_dim: ColorRect
+var _focus_dim_tween: Tween
 var _margin: MarginContainer
 var _built_portrait: bool = false
 
@@ -397,6 +419,7 @@ func _rebuild() -> void:
 		remove_child(child)
 		child.queue_free()
 	_backdrop = null
+	_focus_dim = null
 	_margin = null
 	_page_area = null
 	_track = null
@@ -422,7 +445,7 @@ func _rebuild() -> void:
 	_apply_overscan()
 
 func _apply_overscan() -> void:
-	ScreenLayout.cover(_backdrop)
+	ScreenLayout.cover_all([_backdrop, _focus_dim])
 
 func _build() -> void:
 	_built_portrait = Layout.is_portrait()
@@ -445,6 +468,18 @@ func _build() -> void:
 	_margin.add_theme_constant_override("margin_top", _fs(20))
 	_margin.add_theme_constant_override("margin_bottom", _fs(20))
 	add_child(_margin)
+
+	# Added AFTER _margin and left at the default z_index 0, which is what puts
+	# it over the whole content tree: same z, later in the tree, so it draws
+	# last of the two. The focused tile (z 5) and the caption (z 10) then sort
+	# above it on z alone, regardless of sitting deeper in _margin's subtree.
+	_focus_dim = ColorRect.new()
+	_focus_dim.color = FOCUS_DIM_COLOR
+	_focus_dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_focus_dim.visible = false
+	_focus_dim.modulate.a = 0.0
+	add_child(_focus_dim)
+	ScreenLayout.cover(_focus_dim)
 
 	var outer := VBoxContainer.new()
 	outer.add_theme_constant_override("separation", _fs(14))
@@ -817,6 +852,27 @@ func _hide_caption() -> void:
 	if _caption != null and is_instance_valid(_caption):
 		_caption.visible = false
 		_caption.modulate.a = 0.0
+	# The dim's whole lifetime is the caption's: it comes up when a type is
+	# tapped and stays up - through the resolution, through every replay - until
+	# the player dismisses the explanation. Previously the focus treatment
+	# evaporated the moment the scripted demo finished, leaving the caption
+	# sitting on a fully-lit screen it was no longer focusing anything on.
+	_set_focus_dim(false)
+
+func _set_focus_dim(on: bool) -> void:
+	if _focus_dim == null or not is_instance_valid(_focus_dim):
+		return
+	if _focus_dim_tween != null and _focus_dim_tween.is_valid():
+		_focus_dim_tween.kill()
+	_focus_dim_tween = create_tween()
+	if on:
+		_focus_dim.visible = true
+		_focus_dim_tween.tween_property(_focus_dim, "modulate:a", 1.0, FOCUS_DIM_FADE)
+		return
+	_focus_dim_tween.tween_property(_focus_dim, "modulate:a", 0.0, FOCUS_DIM_FADE)
+	# Hidden as well as transparent, so a fully-faded rect can never sit in the
+	# tree still answering a hit test on some future refactor.
+	_focus_dim_tween.tween_callback(_focus_dim.set_visible.bind(false))
 
 # --- Page 1: timer types ------------------------------------------------------
 # Built from TimerTypesLegend, the shared component the in-game HelpBubble's
@@ -835,6 +891,11 @@ func _build_page_types() -> Control:
 	# builds the same component without setting these and keeps the defaults.
 	_types_legend.replay_delay_after_stop = practice_replay_delay_after_stop
 	_types_legend.replay_delay_after_expire = practice_replay_delay_after_expire
+	# This screen's focus dim is a sibling of the whole content tree, so the
+	# tile being practised has to be lifted over it - see the const block on
+	# _focus_dim, and TimerTypesLegend.lift_focused_tiles for why HelpBubble
+	# does not do this.
+	_types_legend.lift_focused_tiles = true
 	_types_legend.build()
 
 	# Portrait binds the description to the tapped tile via the anchored
@@ -853,6 +914,11 @@ func _build_page_types() -> Control:
 # anchored overlay caption and landscape's in-flow label are real per-screen
 # differences, not something worth forcing into the shared component.
 func _on_legend_type_tapped(tile: HelpDemoTile, text: String, accent: Color) -> void:
+	# Raised in both orientations. Landscape shows its description in flow
+	# rather than in an anchored panel, but the reason for the dim is the same
+	# in both: one tile is being practised and the rest of the screen is not
+	# what the player is looking at.
+	_set_focus_dim(true)
 	if Layout.is_portrait():
 		_show_caption(tile, text, accent)
 	else:
@@ -1437,6 +1503,18 @@ func _update_drag(pos: Vector2) -> void:
 			or (_page_index == PAGE_COUNT - 1 and dx < 0.0)
 		_track.position.x = base + (dx * 0.35 if at_edge else dx)
 
+# Whether this release is a practice run's stop rather than a dismissal.
+func _tap_is_practice_stop(pos: Vector2) -> bool:
+	if _types_legend == null or _page_index != 0:
+		return false
+	# The caption sits on top of the page and is dismissed by its own tap, so a
+	# finger there dismissed it - even in the overlap where the box happens to
+	# cover part of the tile it is anchored to.
+	if _caption != null and _caption.visible \
+			and _caption.get_global_rect().has_point(pos):
+		return false
+	return _types_legend.tap_lands_on_active_run(pos)
+
 func _end_drag(pos: Vector2) -> void:
 	if not _dragging:
 		return
@@ -1450,7 +1528,15 @@ func _end_drag(pos: Vector2) -> void:
 		# way - this only covers what used to be entirely unhandled: a tap on
 		# nothing interactive while some demo (or its leftover caption) is still
 		# running, which previously did nothing at all.
-		_cancel_all_demos()
+		#
+		# Except when the finger came down on a tile that is mid-practice-run:
+		# that tap is that run's STOP, and this branch fires before the tile has
+		# been handed the release (see the note above _input). Cancelling here
+		# would idle the tile out from under its own stop, and the release would
+		# then fall through to "start a demo" and restart the very timer the
+		# player was trying to stop, on the exact frame their timing mattered.
+		if not _tap_is_practice_stop(pos):
+			_cancel_all_demos()
 		return
 	var dx: float = pos.x - _drag_from.x
 	var commit: float = _page_area.size.x * SWIPE_COMMIT_RATIO

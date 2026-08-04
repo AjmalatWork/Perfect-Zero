@@ -47,6 +47,14 @@ var block_taps: bool = false
 var replay_delay_after_stop: float = 2.0
 var replay_delay_after_expire: float = 2.0
 
+# Host opt-in: raise the focused tile above the host's own full-screen focus
+# dim by z_index. HelpScreen sets this, because its dim is a sibling of the
+# whole content tree and would otherwise cover the tile being practised.
+# HelpBubble leaves it off - the bubble is already a modal sitting entirely
+# above the board (its root is at z 90), so lifting a tile inside it would only
+# raise that tile above the bubble's own furniture for no gain.
+var lift_focused_tiles: bool = false
+
 var _demo_token: int = 0
 var _type_tiles: Array[HelpDemoTile] = []
 var _bystander_tiles: Array[HelpDemoTile] = []
@@ -243,7 +251,12 @@ func _on_type_tapped(tile: HelpDemoTile) -> void:
 # those two endings want different beats.
 func _run_practice_loop(tile: HelpDemoTile, token: int) -> void:
 	duck_requested.emit(true)
-	_dim_page1_except(_focus_group(tile))
+	var focus := _focus_group(tile)
+	_dim_page1_except(focus)
+	if lift_focused_tiles:
+		for t in focus:
+			if is_instance_valid(t):
+				t.set_focus_lifted(true)
 	tile.set_selected(true)
 	while _still_demo(token) and is_instance_valid(tile):
 		var grade := await _run_practice_pass(tile, token)
@@ -339,6 +352,23 @@ func _undim_page1() -> void:
 		t.set_dimmed(false)
 
 # --- Host API -------------------------------------------------------------
+
+# True when `global_pos` lands on a tile that currently has a live practice
+# run - meaning that tap IS that run's stop.
+#
+# Hosts need this because they see the release first: HelpScreen classifies
+# swipe-vs-tap in _input(), which runs ahead of any Control's _gui_input, and
+# its plain-tap branch cancels every running demo. Without this check that
+# cancel lands before the tile has been given the release, so the tile is idled
+# out from under its own stop - the tap then falls through to "start a demo"
+# and RESTARTS the timer the player was trying to stop, on the exact frame
+# their timing mattered.
+func tap_lands_on_active_run(global_pos: Vector2) -> bool:
+	for t in _type_tiles + _bystander_tiles:
+		if is_instance_valid(t) and t.is_practice_run_active() \
+				and t.get_global_rect().has_point(global_pos):
+			return true
+	return false
 
 # Stops whatever demo is currently playing and resets every tile to idle -
 # call on close/leave/page-switch. Doesn't touch music-ducking or caption/
