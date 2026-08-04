@@ -427,8 +427,9 @@ func _section_label(text: String) -> Control:
 # comfortably clear 48dp even though the switch itself is smaller than that.
 func _toggle_field(label_text: String, subtitle: String, toggle: NeonToggle) -> Control:
 	var row := PanelContainer.new()
-	row.mouse_filter = Control.MOUSE_FILTER_STOP
-	row.focus_mode = Control.FOCUS_ALL
+	# Input is no longer owned by the row itself - see the `tap` Button added as
+	# a second child below - so this stays IGNORE and never competes with it.
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if Layout.is_portrait():
 		row.custom_minimum_size = Vector2(0, TOUCH_MIN * _s())
 	var sb := StyleBoxEmpty.new()
@@ -464,16 +465,33 @@ func _toggle_field(label_text: String, subtitle: String, toggle: NeonToggle) -> 
 	toggle.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	h.add_child(toggle)
 
-	# Release rather than press, matching every other tap handler in this
-	# project, so a drag that starts on the row does not flip the setting.
-	row.gui_input.connect(func(event: InputEvent) -> void:
-		var released: bool = (event is InputEventMouseButton 				and not event.pressed and event.button_index == MOUSE_BUTTON_LEFT) 			or (event is InputEventScreenTouch and not event.pressed)
-		if released:
-			toggle.toggle()
-			row.accept_event()
-		elif event.is_action_pressed("ui_accept") and row.has_focus():
-			toggle.toggle()
-			row.accept_event())
+	# A real Button laid over the row (PanelContainer fits every direct child to
+	# its own content rect, so this ends up pixel-identical to `row`'s bounds
+	# without a second measurement pass) rather than a hand-rolled
+	# row.gui_input listener. The listener parsed InputEventMouseButton /
+	# InputEventScreenTouch release events directly and matched the same
+	# pattern HelpScreen._on_caption_input uses successfully - but that one
+	# only ever dismisses a caption, where a missed or double-fired event has
+	# no lasting consequence. Here it silently failed to register taps at all
+	# on a real Android device, and a stateful settings toggle has no
+	# "try again, no harm done" quality to mask that with. Routing through
+	# Button reuses Godot's own touch/mouse capture and drag-cancel handling -
+	# the same machinery every other tappable control in this project (every
+	# _button() instance) already relies on and is known to work on-device.
+	var tap := Button.new()
+	tap.flat = true
+	tap.focus_mode = Control.FOCUS_ALL
+	tap.mouse_filter = Control.MOUSE_FILTER_STOP
+	var empty_sb := StyleBoxEmpty.new()
+	for state in ["normal", "hover", "pressed", "focus", "disabled"]:
+		tap.add_theme_stylebox_override(state, empty_sb)
+	# button_up rather than the `pressed` signal: fires unconditionally on
+	# release regardless of action_mode, which is what "release rather than
+	# press, matching every other tap handler in this project" actually means -
+	# pressed's own release-vs-cancel distinction is a further refinement, not
+	# the point.
+	tap.button_up.connect(func(): toggle.toggle())
+	row.add_child(tap)
 	return row
 
 func _dev_grade_label(value: String) -> String:
