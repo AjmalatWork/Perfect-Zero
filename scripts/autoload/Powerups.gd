@@ -50,10 +50,23 @@ const KEY_HINTS := {
 	Kind.OVERCLOCK: "D",
 }
 
+# Drives the button, its procedurally-drawn icon (PowerupIcon reads these via
+# color_of) and the wind-up flash. Overclock is ff1040 to match
+# Juice.OVERCLOCK_COLOR exactly - same hex, duplicated as a literal because
+# Juice.gd carries no class_name, so it isn't resolvable inside a const
+# initializer. Keep the two in sync.
+#
+# It was ff2e5e, which is this project's shared destructive/FAIL/Red-timer red,
+# and it meant Overclock was two different reds depending on which part of it
+# you looked at: the button you pressed and the screen-edge bands that fired
+# were visibly not the same colour. ff1040 is also the value the edge treatment
+# was deliberately tuned to so it reads apart from streak heat's ff5a1e - so
+# moving the button to meet it (rather than the reverse) is what keeps that
+# separation intact.
 const COLORS := {
 	Kind.SHIELD: Color("22d3ff"),
 	Kind.CLEAR_ALL: Color("ffd23f"),
-	Kind.OVERCLOCK: Color("ff2e5e"),
+	Kind.OVERCLOCK: Color("ff1040"),
 }
 
 static func name_of(k: int) -> String:

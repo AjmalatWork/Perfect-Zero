@@ -950,9 +950,9 @@ func _show_summary(best: int, previous_best: int, is_new_best: bool, cleared: bo
 	var text := ""
 	if is_new_best:
 		if previous_best > 0:
-			text = "PREVIOUS BEST   %d" % previous_best
+			text = "PREVIOUS BEST   %s" % ScoreManager.thousands(previous_best)
 	elif best > 0:
-		text = "BEST   %d" % best
+		text = "BEST   %s" % ScoreManager.thousands(best)
 	elif not cleared:
 		text = "STAGE NOT YET CLEARED"
 
@@ -1065,7 +1065,7 @@ func _set_score_display(value: float) -> void:
 	_score_digits.set_value(int(round(value)))
 
 func _set_final_display(value: float) -> void:
-	_final_label.text = "%d" % int(round(value))
+	_final_label.text = ScoreManager.thousands(int(round(value)))
 
 func _set_mult_display(mult: float) -> void:
 	_mult_label.text = "%.1f" % mult
@@ -1674,7 +1674,12 @@ class DigitCounter extends HBoxContainer:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	func set_value(value: int) -> void:
-		var text := "%d" % value
+		# Separated, like every other score the player reads. A comma simply
+		# occupies its own column here - the widget is already one Label per
+		# character with a variable-length string, so nothing special is needed.
+		# The 999 -> 1,000 rollover changes the length and therefore pops every
+		# column, which is exactly the behaviour the comment below already wants.
+		var text := ScoreManager.thousands(value)
 		if text == _shown:
 			return
 		_resize_to(text.length())

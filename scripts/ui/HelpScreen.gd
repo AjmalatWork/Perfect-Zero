@@ -65,11 +65,19 @@ const CHIP_SIZE := Vector2(132, 80)
 # The powerup activation buttons aren't timers, so they keep their own
 # Help-screen-scaled rectangle rather than the real board's square cell size.
 const POWERUP_BUTTON_SIZE := Vector2(150, 92)
-# Width sized from the longest label actually on a tab: "POWERUPS" measures 180
-# at the portrait font size (Font.get_string_size, not estimated), and the
-# button's own stylebox adds 8 either side - so 140 x 1.5 = 210 clears 196 with
-# real slack. The tab row is the widest fixed-width thing on this screen, so
-# over-reserving here is what squeezes the side margins in portrait.
+# A FLOOR, not a clamp - a Button grows past custom_minimum_size to fit its own
+# text, so only the tab that needs more width takes it.
+#
+# 140 x 1.5 = 210 was sized against "POWERUPS", which measures 180 at the
+# portrait font size (Font.get_string_size, not estimated) plus 8 either side
+# from the button's own stylebox. Page 1's tab is now "TIMER TYPES" (renamed
+# from "TIMERS" to match both the GDD and the in-game Help bubble's own heading,
+# which already agreed with each other), and that string is the longest on the
+# row at roughly 251 units. Only that one tab grows: the row comes to about
+# 251 + 210 + 210 + two 15-unit separations = ~701 against the 820 available
+# inside this screen's 40-unit portrait side margins, so there is real slack
+# left. The tab row is still the widest fixed-width thing on this screen, so
+# over-reserving here is what squeezes those margins.
 const TAB_SIZE := Vector2(140, 80)
 # Reserved so the description swapping between a one-line and a three-line
 # string can't reflow the page under the player's finger mid-read. 88 still
@@ -114,9 +122,26 @@ const PROMPT_HEIGHT := 30.0
 # tabs optional rather than required. Kept as an indicator rather than a control:
 # a tappable dot would need a 120-unit (48dp) hit box, and the vertical budget
 # for that does not exist on this screen.
-const DOT_ROW_HEIGHT := 28.0
-const DOT_SIZE := 10.0
-const DOT_ACTIVE_WIDTH := 26.0
+# Absolute canvas units, deliberately NOT multiplied by _s() - the same call
+# OptionsPanel._content_width() makes, for the same class of reason. These dots
+# are a fixed-size indicator component, not type: they carry no text and their
+# job (mark position in a short strip) doesn't get harder or easier with the
+# surrounding type scale.
+#
+# Scaling them per-screen is what pulled the identical component apart. The raw
+# constants were close and plausibly deliberate - 10 here, 8 on Scores - but
+# this screen scales by 1.5 and Scores by 1.2, so the EFFECTIVE portrait sizes
+# came out 15 and 9.6: a 56% difference nobody actually chose, from a 25%
+# difference someone maybe did. Held absolute, the two match by construction and
+# cannot drift again.
+#
+# ScoresScreen references these directly rather than declaring its own pair -
+# same cross-screen reuse as LevelSelect.AllPerfectMark, and for the same
+# reason: one component, one definition, so the two screens can never disagree.
+const DOT_ROW_HEIGHT := 40.0
+const DOT_SIZE := 14.0
+const DOT_ACTIVE_WIDTH := 36.0
+const DOT_SEPARATION := 12
 
 # How far a drag has to travel before it stops counting as a tap on whatever
 # tile it started on, and how far before releasing commits to a page change.
@@ -442,7 +467,15 @@ func _build() -> void:
 	# 96 raw -> 144 canvas units in portrait (57.6dp), clearing the 56dp target -
 	# measured at 38.3dp before this fix. See the CHIP_SIZE/TAB_SIZE comment for
 	# the same dp-per-canvas-unit derivation.
-	back.custom_minimum_size = Vector2(200, 96) * _s()
+	#
+	# Gated to portrait, like every other screen's BACK does it (Level Select,
+	# Credits, Endless Mode Select all write this same ternary; Options/Scores
+	# route it through _back_h()). Landscape is desktop/web with a mouse and has
+	# no dp floor to clear, so it keeps the shared 200x64 - without the gate this
+	# screen's BACK was 50% taller than the other five on the one platform where
+	# they sit side by side in the same session.
+	var back_h: float = 96.0 if Layout.is_portrait() else 64.0
+	back.custom_minimum_size = Vector2(200, back_h) * _s()
 	back.pressed.connect(_on_back)
 	var back_wrap := CenterContainer.new()
 	back_wrap.add_child(back)
@@ -463,7 +496,10 @@ func _build_tab_row() -> Control:
 	row.add_theme_constant_override("separation", _fs(10))
 	for i in range(PAGE_COUNT):
 		var tab := Button.new()
-		tab.text = ["TIMERS", "POWERUPS", "SCORING"][i]
+		# "TIMER TYPES", not "TIMERS" - the same page is called that by the GDD and
+		# by HelpBubble.PAGE_TITLES, so this was the only one of the three names
+		# for it that disagreed. See TAB_SIZE for the width this costs.
+		tab.text = ["TIMER TYPES", "POWERUPS", "SCORING"][i]
 		tab.custom_minimum_size = TAB_SIZE * _s()
 		tab.add_theme_font_size_override("font_size", _fs(TAB_FONT_SIZE))
 		tab.add_theme_constant_override("outline_size", 4)
@@ -481,12 +517,12 @@ func _build_tab_row() -> Control:
 func _build_dot_row() -> Control:
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", _fs(10))
-	row.custom_minimum_size = Vector2(0, DOT_ROW_HEIGHT * _s())
+	row.add_theme_constant_override("separation", DOT_SEPARATION)
+	row.custom_minimum_size = Vector2(0, DOT_ROW_HEIGHT)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	for i in range(PAGE_COUNT):
 		var dot := Panel.new()
-		dot.custom_minimum_size = Vector2(DOT_SIZE, DOT_SIZE) * _s()
+		dot.custom_minimum_size = Vector2(DOT_SIZE, DOT_SIZE)
 		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(dot)
@@ -512,9 +548,9 @@ func _style_dots() -> void:
 		var active := i == _page_index
 		var sb := StyleBoxFlat.new()
 		sb.bg_color = NEON if active else Color(MUTED.r, MUTED.g, MUTED.b, 0.45)
-		sb.set_corner_radius_all(roundi(DOT_SIZE * _s() * 0.5))
+		sb.set_corner_radius_all(roundi(DOT_SIZE * 0.5))
 		dot.add_theme_stylebox_override("panel", sb)
-		var target_w: float = (DOT_ACTIVE_WIDTH if active else DOT_SIZE) * _s()
+		var target_w: float = DOT_ACTIVE_WIDTH if active else DOT_SIZE
 		if not animate:
 			dot.custom_minimum_size.x = target_w
 			continue
@@ -527,7 +563,10 @@ func _style_tabs() -> void:
 		var active := i == _page_index
 		var accent: Color = NEON if active else MUTED
 		tab.add_theme_color_override("font_color", Color.WHITE if active else MUTED)
-		tab.add_theme_color_override("font_outline_color", accent if active else Color(0, 0, 0, 0.6))
+		# MUTED, not black - every other de-emphasized outline in the game (Help's
+		# own inactive tabs used to be the one exception) fades toward MUTED rather
+		# than dropping to a plain black outline.
+		tab.add_theme_color_override("font_outline_color", accent if active else Color(MUTED.r, MUTED.g, MUTED.b, 0.6))
 		for state in ["normal", "hover", "pressed"]:
 			tab.add_theme_stylebox_override(state, _tab_box(accent, active))
 

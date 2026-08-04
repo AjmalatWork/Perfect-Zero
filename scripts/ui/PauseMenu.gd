@@ -36,6 +36,13 @@ const RED := Color("ff2e5e")
 const GREY := Color("8b90a8")
 const TEXT_FILL := Color("dfe3ee")
 
+# The shared Android-portrait row-button treatment. Same 380x140 footprint and
+# same 46pt type as StageResultScreen/EndlessEndScreen/TutorialManager/
+# PowerupTutorial - five screens, one button. Landscape keeps its own three-tier
+# sizes and is untouched by both.
+const PORTRAIT_BUTTON_SIZE := Vector2(380, 140)
+const PORTRAIT_BUTTON_FONT := 46
+
 @export var campaign_navigator: CampaignNavigator
 @export var endless_runner: EndlessRunner
 
@@ -372,14 +379,24 @@ func _build() -> void:
 	# still-different-sized buttons stacked together. Landscape (desktop/web,
 	# mouse-driven) keeps the original three-tier layout and sizes untouched.
 	var touch := Layout.is_portrait()
-	var uniform_size := Vector2(380, 140)
-	# Font sizes bumped by a lot on a further user request (RESUME 40->52,
-	# RESTART 38->50, OPTIONS/BACK TO TITLE 34->48) - landscape (desktop/web)
-	# sizes are untouched.
-	col.add_child(_menu_button("RESUME", NEON, resume, Emphasis.PRIMARY, 52 if touch else 32,
+	var uniform_size := PORTRAIT_BUTTON_SIZE
+	# One font for all four, matching the footprint they already share. These
+	# were 52/50/48/48 - close enough to read as accidental rather than as rank,
+	# which fights the whole point of the portrait layout: the four buttons are
+	# deliberately uniform here and ACCENT COLOUR is what distinguishes them
+	# (RESUME/RESTART/OPTIONS cyan, BACK TO TITLE grey), not size. The three
+	# leftover sizes were survivors of the pre-uniform three-tier layout.
+	#
+	# 46 is PORTRAIT_BUTTON_FONT, the same value StageResultScreen,
+	# EndlessEndScreen, TutorialManager and PowerupTutorial all use on this
+	# identical 380x140 box - so all five screens sharing the treatment now share
+	# its type too. Landscape (desktop/web) keeps its own three-tier sizes.
+	col.add_child(_menu_button("RESUME", NEON, resume, Emphasis.PRIMARY,
+		PORTRAIT_BUTTON_FONT if touch else 32,
 		uniform_size if touch else Vector2(380, 84), true))
 	col.add_child(_spacer(36))
-	col.add_child(_menu_button("RESTART", NEON, _on_restart, Emphasis.SECONDARY, 50 if touch else 28,
+	col.add_child(_menu_button("RESTART", NEON, _on_restart, Emphasis.SECONDARY,
+		PORTRAIT_BUTTON_FONT if touch else 28,
 		uniform_size if touch else Vector2(320, 68), touch))
 	col.add_child(_spacer(36))
 
@@ -388,9 +405,11 @@ func _build() -> void:
 		# invisible TERTIARY treatment) - a user request on top of the earlier
 		# touch-target sizing pass. `glow: true` on all three gives them the
 		# same lit look RESUME has, per a further user request.
-		col.add_child(_menu_button("OPTIONS", NEON, _open_options, Emphasis.SECONDARY, 48, uniform_size, true))
+		col.add_child(_menu_button("OPTIONS", NEON, _open_options, Emphasis.SECONDARY,
+			PORTRAIT_BUTTON_FONT, uniform_size, true))
 		col.add_child(_spacer(36))
-		var title_wrap := _menu_button("BACK TO TITLE", GREY, _on_title, Emphasis.SECONDARY, 48, uniform_size, true)
+		var title_wrap := _menu_button("BACK TO TITLE", GREY, _on_title, Emphasis.SECONDARY,
+			PORTRAIT_BUTTON_FONT, uniform_size, true)
 		col.add_child(title_wrap)
 		# SECONDARY normally blends font_color toward TEXT_FILL (accent.lerp(...,
 		# 0.5)), which would leave the box a purer grey than the text sitting on
