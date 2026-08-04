@@ -93,10 +93,14 @@ const MULTIPLIER_BADGE_COLOR := Color("ff1040")
 # below): that's an unrelated, pre-existing system ranking timers for the
 # audio-priority mix. This one is purely visual and has no audio component.
 #
-# urgency_of() mirrors ScoreManager.base_points()'s own curve, normalised to
-# 0..1 instead of 0..200 points, so "how urgent this looks" and "how many
-# points this is worth right now" trace the same shape - urgency 1.0 at
-# distance 0, easing to 0.0 at the FAIL boundary (|distance| == MISS_MAX).
+# urgency_of() is a plain linear ramp from 0.0 at |distance| == 1 (the FAIL
+# boundary) to 1.0 at distance 0 - NOT ScoreManager.base_points()'s own
+# quadratic curve. That curve back-loads intensity near zero (urgency is only
+# 0.25 at distance 0.5, since (1-0.5)^2 = 0.25) which reads as the glow doing
+# almost nothing until the very last instant, then rushing to full brightness -
+# fine for a SCORE curve, wrong for a glance-able "how close is this" cue,
+# which wants an even, gradual climb the player can track continuously across
+# the whole ±1.0 window rather than a late surprise.
 #
 # Two independent style axes, both fed by the SAME urgency value so they ramp
 # in lockstep rather than as two separately-tuned curves:
@@ -884,11 +888,13 @@ func _type_glow_scale() -> float:
 # See the constants block near the top of the file for the full design
 # rationale; this section is just the machinery.
 
-# Mirrors ScoreManager.base_points()'s own curve (int(200 * (1-min(d,1))^2)),
-# normalised to 0..1 instead of 0..200 points, so "how urgent this looks" and
-# "how many points this stop would be worth right now" trace the same shape.
+# Linear, not ScoreManager.base_points()'s quadratic curve - see the doc
+# comment above the constants block for why a glance-able "how close" cue
+# wants an even ramp rather than the score curve's back-loaded one. 1.0 at
+# distance 0, sloping evenly down to 0.0 at |distance| == 1 (the FAIL
+# boundary) either side of zero.
 static func urgency_of(distance: float) -> float:
-	return pow(1.0 - minf(absf(distance), 1.0), 2.0)
+	return 1.0 - minf(absf(distance), 1.0)
 
 # Recomputes _urgency/_urgency_pulse from whatever distance-like quantity this
 # frame's caller has (current_time itself for the four countdown types, or
