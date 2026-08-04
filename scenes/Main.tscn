@@ -2,7 +2,6 @@
 
 [ext_resource type="Script" uid="uid://c3q7kps6bequj" path="res://scripts/gameplay/StageController.gd" id="1_0bbpv"]
 [ext_resource type="PackedScene" uid="uid://cndksqmkf2tel" path="res://scenes/HUD.tscn" id="1_rarhs"]
-[ext_resource type="Resource" uid="uid://ccolvhpxs0eca" path="res://levels/test_stage.tres" id="2_rarhs"]
 [ext_resource type="PackedScene" uid="uid://cw7reamvswdax" path="res://scenes/TimerSlot.tscn" id="3_vcsgt"]
 [ext_resource type="Script" uid="uid://dmewiwucna183" path="res://scripts/ui/MainScreenRouter.gd" id="4_router"]
 [ext_resource type="Script" uid="uid://cwh72vlx1r8c5" path="res://scripts/gameplay/CampaignNavigator.gd" id="5_navigator"]
@@ -83,7 +82,6 @@ theme_override_constants/separation = 32
 
 [node name="StageController" type="Node" parent="." unique_id=2047105993 node_paths=PackedStringArray("timer_container")]
 script = ExtResource("1_0bbpv")
-current_stage_data = ExtResource("2_rarhs")
 timer_container = NodePath("../TimerContainer/TimerRows")
 timer_slot_scene = ExtResource("3_vcsgt")
 
