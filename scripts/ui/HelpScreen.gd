@@ -70,14 +70,14 @@ const POWERUP_BUTTON_SIZE := Vector2(150, 92)
 #
 # 140 x 1.5 = 210 was sized against "POWERUPS", which measures 180 at the
 # portrait font size (Font.get_string_size, not estimated) plus 8 either side
-# from the button's own stylebox. Page 1's tab is now "TIMER TYPES" (renamed
-# from "TIMERS" to match both the GDD and the in-game Help bubble's own heading,
-# which already agreed with each other), and that string is the longest on the
-# row at roughly 251 units. Only that one tab grows: the row comes to about
-# 251 + 210 + 210 + two 15-unit separations = ~701 against the 820 available
-# inside this screen's 40-unit portrait side margins, so there is real slack
-# left. The tab row is still the widest fixed-width thing on this screen, so
-# over-reserving here is what squeezes those margins.
+# from the button's own stylebox. Page 1's tab was briefly "TIMER TYPES", the
+# longest string on the row at roughly 251 units and the only tab that had to
+# grow past this floor to fit; it is "TIMERS" again now that the page is a set
+# of timers to practise rather than a legend of types, which is comfortably
+# shorter than "POWERUPS". So the row is back to 3 x 210 + two 15-unit
+# separations = ~660 against the 820 available inside this screen's 40-unit
+# portrait side margins. The tab row is still the widest fixed-width thing on
+# this screen, so over-reserving here is what squeezes those margins.
 const TAB_SIZE := Vector2(140, 80)
 # Reserved so the description swapping between a one-line and a three-line
 # string can't reflow the page under the player's finger mid-read. 88 still
@@ -186,30 +186,52 @@ const SHIELD_SAVED_SEC := 2.0
 # so it reads unambiguously as the FAIL it is rather than as a borderline MISS.
 const SHIELD_FAIL_DISTANCE := 1.25
 
-# --- Page 1 demo timing -------------------------------------------------------
-# Every value below is either a real game constant (cited per-line) or a
-# deliberately-picked demo number chosen for pacing, not derived from anything.
-const NORMAL_START := 3.0
-const GOLDEN_BLUR_SEC := 1.8
-const BLACKOUT_START := 3.0
+# --- Page 1 timing ------------------------------------------------------------
+# Page 1 is practised rather than watched now (see the practice block below), so
+# the starts/settle-times that only paced a scripted animation are gone with the
+# demos that used them - NORMAL_START, GOLDEN_BLUR_SEC, BLACKOUT_START, the
+# compressed DECAY_* windows, BYSTANDER_STARTS and RED/BLUE_SETTLE_SEC. What
+# survives here is what practice mode still genuinely needs, plus the two values
+# pages 2/3 share.
+#
+# TutorialManager keeps its own same-named copies of the removed ones on
+# purpose: Arcade's tutorial popups are still scripted demonstrations, and they
+# were never reading these.
 const BLACKOUT_THRESHOLD := 1.5   # TimerData.blackout_duration's real default
-# Real Decay windows are 0.6/1.8/3.6/6.0s cumulative (TimerData.decay_*_end()) -
-# compressed 2.5x here so the full climb doesn't drag, same proportions.
-const DECAY_PERFECT_END := 0.24
-const DECAY_GOOD_END := 0.72
-const DECAY_OKAY_END := 1.44
-const DECAY_MISS_END := 2.4
-const REACT_TILE_START := 1.2     # Red/Blue's own tile before it resolves
-const BYSTANDER_STARTS := [2.0, 2.6]
-const RED_SETTLE_SEC := 1.5       # how long the sped-up bystanders run before ending
+const REACT_TILE_START := 1.2     # page 2's Shield preview; also read by HelpBubble
 const BLUE_FREEZE_SEC := 1.0      # matches EndlessRunner's apply_pause(1.0) exactly
-const BLUE_SETTLE_SEC := 2.5
 
 # A fresh random landing point inside the real PERFECT window every time a demo
 # auto-clicks, instead of a single fixed 0.03 every run - the actual game never
 # lands on the exact same distance twice either.
 func _random_perfect_stop() -> float:
 	return randf_range(0.0, TimerSlot.PERFECT_MAX)
+
+# --- Practice mode timings ----------------------------------------------------
+# Page 1's tiles are practised, not watched: every start below is what the
+# PLAYER gets to time, so these are deliberately longer and rounder than the
+# scripted-demo numbers above, which only had to read well as an animation.
+#
+# 4.00 for everything that counts down. Long enough to watch the urgency glow
+# come up and commit deliberately, rather than the 3.00 a scripted demo used
+# where nobody had to react at all.
+const PRACTICE_START := 4.0
+
+# Red and Blue's bystanders. Deliberately longer than the 4.00 of the tile that
+# acts on them, so they are still running when the reaction lands and the player
+# can actually see it hit - a bystander that had already resolved would show
+# nothing. Staggered so the two don't resolve as one event.
+const PRACTICE_BYSTANDER_STARTS := [6.0, 8.0]
+
+# Decay climbs 0.00 -> 4.00. The tier boundaries keep the REAL windows'
+# proportions (TimerData's 0.6/1.8/3.6/6.0 cumulative, i.e. 1/10, 3/10, 6/10 of
+# the ceiling) rather than being picked by eye, so practising Decay's timing
+# here trains the same shape of judgement the board asks for - only the total
+# length differs.
+const PRACTICE_DECAY_PERFECT_END := 0.4
+const PRACTICE_DECAY_GOOD_END := 1.2
+const PRACTICE_DECAY_OKAY_END := 2.4
+const PRACTICE_DECAY_MISS_END := 4.0
 
 # --- Practice mode replay pacing ----------------------------------------------
 # How long a resolved practice timer holds its grade before starting over. Two
@@ -513,10 +535,12 @@ func _build_tab_row() -> Control:
 	row.add_theme_constant_override("separation", _fs(10))
 	for i in range(PAGE_COUNT):
 		var tab := Button.new()
-		# "TIMER TYPES", not "TIMERS" - the same page is called that by the GDD and
-		# by HelpBubble.PAGE_TITLES, so this was the only one of the three names
-		# for it that disagreed. See TAB_SIZE for the width this costs.
-		tab.text = ["TIMER TYPES", "POWERUPS", "SCORING"][i]
+		# "TIMERS", matching HelpBubble.PAGE_TITLES and the GDD - all three were
+		# moved together, so the three names for this page still agree. It was
+		# "TIMER TYPES" while the page was a legend of types to read about;
+		# the page is a set of timers to practise now, and the shorter name is
+		# also what buys back the tab-row width TAB_SIZE documents.
+		tab.text = ["TIMERS", "POWERUPS", "SCORING"][i]
 		tab.custom_minimum_size = TAB_SIZE * _s()
 		tab.add_theme_font_size_override("font_size", _fs(TAB_FONT_SIZE))
 		tab.add_theme_constant_override("outline_size", 4)

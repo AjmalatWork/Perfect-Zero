@@ -67,6 +67,26 @@ const SELECTED_SHADOW_SIZE := 20.0
 const SELECTED_SHADOW_ALPHA := 0.55
 const SELECTED_BORDER_WIDTH := 5.0
 
+# --- Tap affordance -----------------------------------------------------------
+# A practice tile looks identical to a scripted one while it runs, so nothing
+# about it says the countdown is waiting on the player rather than about to
+# resolve itself. This is that tell: a small pulsing "TAP" under the digit, up
+# only while a run is genuinely stoppable, so it never promises interactivity a
+# scripted demo won't honour.
+#
+# Sits low rather than centred because the digit label fills the whole tile and
+# centres in it - at HelpScreen.TIMER_DIGIT_RATIO (0.27 of tile height) the
+# glyphs occupy roughly the middle third, leaving the bottom quarter clear.
+# Text, not an icon: this project's SVG rules forbid <text> in icons and the
+# glyph would have to be hand-drawn, for a label three characters long.
+const TAP_HINT_TEXT := "TAP"
+const TAP_HINT_TOP_RATIO := 0.74
+const TAP_HINT_HEIGHT_RATIO := 0.20
+const TAP_HINT_FONT_RATIO := 0.6      # of this tile's own name font
+const TAP_HINT_PULSE_SEC := 0.7
+const TAP_HINT_ALPHA_MIN := 0.35
+const TAP_HINT_ALPHA_MAX := 1.0
+
 var timer_type: int = TimerData.TimerType.NORMAL
 var value: float = 0.0
 
@@ -131,6 +151,17 @@ var _tap_consumed: bool = false
 # practised. Sampling on press and resolving on release gets both properties.
 var _tap_value: float = 0.0
 
+# Whether the most recently finished run ended on a player tap rather than on
+# running the clock out. Hosts pick their replay delay from this: "I never got
+# to it" and "I stopped it and got a grade" are different beats, and the grade
+# alone cannot separate them - a late enough tap grades FAIL too, exactly like
+# never tapping at all.
+var last_run_was_tapped: bool = false
+
+var _tap_hint: Label
+var _tap_hint_tween: Tween
+var _flash_tween: Tween
+
 func configure(p_type: int, display_name: String, digit_size: int, name_size: int) -> void:
 	timer_type = p_type
 	_accent = TimerTypeInfo.color_of(p_type)
@@ -171,6 +202,21 @@ func configure(p_type: int, display_name: String, digit_size: int, name_size: in
 	_name_label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	add_child(_name_label)
 
+	_tap_hint = Label.new()
+	_tap_hint.text = TAP_HINT_TEXT
+	# Floored so the smallest tile still clears the project's readability bar
+	# rather than scaling this into an illegible smudge.
+	_tap_hint.add_theme_font_size_override("font_size",
+		maxi(roundi(name_size * TAP_HINT_FONT_RATIO), 12))
+	_tap_hint.add_theme_color_override("font_color", TEXT_FILL)
+	_tap_hint.add_theme_color_override("font_outline_color", _accent)
+	_tap_hint.add_theme_constant_override("outline_size", 5)
+	_tap_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_tap_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_tap_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tap_hint.visible = false
+	add_child(_tap_hint)
+
 	_layout_children()
 	_set_digit_mode(false)
 
@@ -201,6 +247,9 @@ func _layout_children() -> void:
 	_digit.size = s
 	_name_label.position = Vector2.ZERO
 	_name_label.size = s
+	if _tap_hint != null:
+		_tap_hint.position = Vector2(0.0, s.y * TAP_HINT_TOP_RATIO)
+		_tap_hint.size = Vector2(s.x, s.y * TAP_HINT_HEIGHT_RATIO)
 
 # Toggles between the two mutually-exclusive faces of a tile: its name (idle,
 # nothing running yet) and its live digit (a play_*() sequence is active).
@@ -257,6 +306,8 @@ func idle() -> void:
 	_set_digit_mode(false)
 	if _pop_tween != null and _pop_tween.is_valid():
 		_pop_tween.kill()
+	if _flash_tween != null and _flash_tween.is_valid():
+		_flash_tween.kill()
 	if _grade_sign_tween != null and _grade_sign_tween.is_valid():
 		_grade_sign_tween.kill()
 	if _grade_sign != null and is_instance_valid(_grade_sign):
@@ -604,20 +655,58 @@ func is_practice_run_active() -> bool:
 	return _awaiting_tap
 
 func _begin_tappable_run() -> void:
+	# The previous run's grade flash may still be animating bg_color/shadow_size
+	# (see _flash_grade) - stop it and put the panel back to its resting look,
+	# or it spends the start of this run overwriting the urgency glow with the
+	# tail of the last stop's flash.
+	if _flash_tween != null and _flash_tween.is_valid():
+		_flash_tween.kill()
+	if _panel_style != null:
+		_panel_style.bg_color = _base_bg
+		_panel_style.border_color = _accent
 	_clear_tap_capture()
 	_awaiting_tap = true
+	_set_tap_hint(true)
 
 func _clear_tap_capture() -> void:
 	_awaiting_tap = false
 	_tap_pressed = false
 	_tap_consumed = false
 	_tap_value = 0.0
+	_set_tap_hint(false)
+
+# Pulse depth (not presence) rides Settings.effect_scale(), the same treatment
+# every other softenable local effect on this tile gets. Reduce-screen-effects
+# damps the throb without taking the hint away - it is the only thing telling a
+# player the tile is waiting on them, so removing it outright would cost them
+# the interaction rather than just the motion.
+func _set_tap_hint(on: bool) -> void:
+	if _tap_hint == null:
+		return
+	if _tap_hint_tween != null and _tap_hint_tween.is_valid():
+		_tap_hint_tween.kill()
+	_tap_hint.visible = on
+	if not on:
+		return
+	_tap_hint.modulate.a = TAP_HINT_ALPHA_MAX
+	if not is_inside_tree():
+		return
+	var min_a: float = lerpf(TAP_HINT_ALPHA_MAX, TAP_HINT_ALPHA_MIN, Settings.effect_scale())
+	_tap_hint_tween = create_tween()
+	_tap_hint_tween.set_loops()
+	_tap_hint_tween.tween_property(_tap_hint, "modulate:a", min_a, TAP_HINT_PULSE_SEC) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_tap_hint_tween.tween_property(_tap_hint, "modulate:a", TAP_HINT_ALPHA_MAX, TAP_HINT_PULSE_SEC) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 # Shared exit for all three runs below: same resolution feedback a scripted
 # demo gets, tap state cleared, grade handed back to the awaiting host. Each
 # caller passes its own frozen-digit text because that is the only part of
 # resolving that genuinely differs between the types.
 func _finish_tappable_run(grade: String, frozen_digit: String, bonus_text: String) -> String:
+	# Read before _clear_tap_capture() wipes it - this is the only moment the
+	# tapped/expired distinction still exists.
+	last_run_was_tapped = _tap_consumed
 	_clear_tap_capture()
 	play_grade(grade, frozen_digit, 0.0, bonus_text)
 	return grade
@@ -836,8 +925,19 @@ func play_grade(grade: String, frozen_digit: String, hold: float, bonus_text: St
 			AudioManager.play_expire()
 
 # Same match-on-grade panel treatment as TimerSlot._play_stop_flash().
+#
+# Held in a field rather than a local because it animates shadow_size, which the
+# urgency glow also writes every frame. A practice tile replays, so the next run
+# can begin while this is still in flight (the flash runs 0.35s; the replay
+# delays are Inspector-tunable and can be set shorter), and the two would then
+# fight over the same property - the flash winning, because a Tween's
+# interpolation overwrites whatever the per-frame write just put there. Same
+# class of conflict TimerSlot._panel_transition_lock exists for.
 func _flash_grade(grade: String) -> void:
+	if _flash_tween != null and _flash_tween.is_valid():
+		_flash_tween.kill()
 	var tween := create_tween()
+	_flash_tween = tween
 	tween.set_parallel(true)
 	match grade:
 		"PERFECT":

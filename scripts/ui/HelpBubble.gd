@@ -352,7 +352,9 @@ func _cancel_all_demos() -> void:
 			p.set_present(false)
 	_undim_powerup_buttons()
 
-const PAGE_TITLES := ["TIMER TYPES", "POWERUPS"]
+# "TIMERS", not "TIMER TYPES" - moved in lockstep with HelpScreen's own tab
+# and the GDD, so all three names for this page still agree.
+const PAGE_TITLES := ["TIMERS", "POWERUPS"]
 
 func _on_page_changed(index: int) -> void:
 	_cancel_all_demos()
