@@ -317,7 +317,7 @@ func play_countdown(start: float, stop_at: float = 0.0, blackout_at: float = -1.
 		# negative (play_overrun below is the coroutine for that territory) - so
 		# `value <= 0.0` is the correct flicker-style trigger even though it
 		# practically only ever fires on this loop's very last frame.
-		_update_urgency(dt, value, value <= 0.0)
+		_update_urgency(dt, value, value <= 0.0, TimerSlot.URGENCY_RANGE)
 		_apply_urgency_to_panel(blackout_at >= 0.0 and value <= blackout_at)
 		tick_accum += dt
 		if tick_accum >= 1.0:
@@ -362,7 +362,7 @@ func play_overrun(limit: float) -> void:
 		# already run past its zero moment (see the doc comment above), and
 		# `value` here is a positive MAGNITUDE of time-past-zero rather than a
 		# signed current_time - a sign check would never trigger past frame one.
-		_update_urgency(dt, value, true)
+		_update_urgency(dt, value, true, TimerSlot.URGENCY_RANGE)
 		_apply_urgency_to_panel()
 		tick_accum += dt
 		if tick_accum >= 1.0:
@@ -436,8 +436,9 @@ func _decay_tier_for(v: float, perfect_end: float, good_end: float, okay_end: fl
 # the real gameplay event bus intact: everything here reads only `value`,
 # `timer_type` and `_selected`, all local to the tile itself.
 
-func _update_urgency(delta: float, distance_like: float, past_zero: bool) -> void:
-	_urgency = TimerSlot.urgency_of(distance_like)
+func _update_urgency(delta: float, distance_like: float, past_zero: bool,
+		max_distance: float = 1.0) -> void:
+	_urgency = TimerSlot.urgency_of(distance_like, max_distance)
 	if past_zero != _urgency_past_zero:
 		_urgency_past_zero = past_zero
 		_urgency_phase = 0.0

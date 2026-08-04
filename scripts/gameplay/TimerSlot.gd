@@ -93,14 +93,18 @@ const MULTIPLIER_BADGE_COLOR := Color("ff1040")
 # below): that's an unrelated, pre-existing system ranking timers for the
 # audio-priority mix. This one is purely visual and has no audio component.
 #
-# urgency_of() is a plain linear ramp from 0.0 at |distance| == 1 (the FAIL
-# boundary) to 1.0 at distance 0 - NOT ScoreManager.base_points()'s own
-# quadratic curve. That curve back-loads intensity near zero (urgency is only
-# 0.25 at distance 0.5, since (1-0.5)^2 = 0.25) which reads as the glow doing
-# almost nothing until the very last instant, then rushing to full brightness -
-# fine for a SCORE curve, wrong for a glance-able "how close is this" cue,
-# which wants an even, gradual climb the player can track continuously across
-# the whole ±1.0 window rather than a late surprise.
+# urgency_of() is a plain linear ramp from 0.0 at |distance| == max_distance
+# to 1.0 at distance 0 - NOT ScoreManager.base_points()'s own quadratic curve.
+# That curve back-loads intensity near zero (urgency is only 0.25 at distance
+# 0.5, since (1-0.5)^2 = 0.25) which reads as the glow doing almost nothing
+# until the very last instant, then rushing to full brightness - fine for a
+# SCORE curve, wrong for a glance-able "how close is this" cue, which wants an
+# even, gradual climb the player can track continuously.
+#
+# max_distance is a VISUAL window, deliberately decoupled from MISS_MAX (the
+# real 1.0 FAIL boundary grading actually uses) - see URGENCY_RANGE below for
+# why the four countdown types widen it past that boundary, and Decay's own
+# call site for why it stays at the 1.0 default instead.
 #
 # Two independent style axes, both fed by the SAME urgency value so they ramp
 # in lockstep rather than as two separately-tuned curves:
@@ -118,6 +122,27 @@ const MULTIPLIER_BADGE_COLOR := Color("ff1040")
 # type encoding as a known colourblind-accessibility gap - a second, unrelated
 # meaning riding on hue would make that worse. border_color/_accent are never
 # touched by anything below; only size, alpha and width move.
+# How far out, in seconds of current_time, the glow should start building -
+# a user request for anticipation to begin earlier than the FAIL boundary
+# itself (1.0/MISS_MAX), so a player scanning a busy board gets a bigger head
+# start before a timer is even close to gradable. Only the visual window
+# widens; MISS_MAX/the real grading boundary is untouched, so a timer sitting
+# at distance 1.5 (well outside FAIL/MISS territory) now shows a faint,
+# building glow rather than none at all. Applies to the four countdown types
+# only (Normal/Red/Blue/Blackout) - Decay's own urgency input is already
+# normalised to its own 0..1 window (see _process_decay()) and stays there,
+# since widening it the same way would mean its urgency never reaches 0
+# within the range it's actually fed.
+#
+# Note this also widens the POST-crossing (flicker) side by the same amount,
+# but current_time can never actually reach -2.0 for a live timer - it's
+# force-stopped at EXPIRE_THRESHOLD (-1.0) - so in practice the flicker phase
+# now settles at urgency ~0.5 rather than fading fully to 0 before the timer
+# disappears. If that reads as the flicker staying too bright right up to
+# expiry, narrow this back down or split it into a separate forward/backward
+# pair - flagged here rather than silently chosen.
+const URGENCY_RANGE := 2.0
+
 const URGENCY_GLOW_SIZE_BONUS := 18.0     # added to _glow_size() at full pulse
 const URGENCY_ALPHA_BONUS := 0.35         # added to _glow_alpha() at full pulse (still clamped <=1)
 const URGENCY_BORDER_WIDTH_BONUS := 3.0   # added to the base 3px border at full pulse
@@ -319,8 +344,9 @@ func _process(delta: float) -> void:
 	# here (Normal/Red/Blue/Blackout) - signed, so the flicker-style swap is
 	# just current_time's own sign, no second threshold check needed.
 	# Suppressed/muted for Blackout while inside its own blank-digit window -
-	# see BLACKOUT_URGENCY_SUPPRESSED above.
-	_update_urgency(delta, current_time, current_time <= 0.0)
+	# see BLACKOUT_URGENCY_SUPPRESSED above. URGENCY_RANGE widens the ramp's
+	# window past MISS_MAX's own 1.0 - see that constant's own comment.
+	_update_urgency(delta, current_time, current_time <= 0.0, URGENCY_RANGE)
 	_apply_urgency_to_panel()
 
 	# Ranked against every other live timer so a busy board doesn't stack N ticks
@@ -891,10 +917,13 @@ func _type_glow_scale() -> float:
 # Linear, not ScoreManager.base_points()'s quadratic curve - see the doc
 # comment above the constants block for why a glance-able "how close" cue
 # wants an even ramp rather than the score curve's back-loaded one. 1.0 at
-# distance 0, sloping evenly down to 0.0 at |distance| == 1 (the FAIL
-# boundary) either side of zero.
-static func urgency_of(distance: float) -> float:
-	return 1.0 - minf(absf(distance), 1.0)
+# distance 0, sloping evenly down to 0.0 at |distance| == max_distance either
+# side of zero. Defaults to 1.0 (the FAIL boundary) rather than
+# URGENCY_RANGE - Decay's own call site relies on that default, since its
+# input is already normalised to its own 0..1 window; only the four countdown
+# types pass URGENCY_RANGE explicitly.
+static func urgency_of(distance: float, max_distance: float = 1.0) -> float:
+	return 1.0 - clampf(absf(distance) / maxf(max_distance, 0.0001), 0.0, 1.0)
 
 # Recomputes _urgency/_urgency_pulse from whatever distance-like quantity this
 # frame's caller has (current_time itself for the four countdown types, or
@@ -919,8 +948,9 @@ static func urgency_of(distance: float) -> float:
 # a sign check here could never read correctly. Simpler for every call site to
 # just say what style it wants than to keep the sign convention consistent
 # everywhere that might ever call this.
-func _update_urgency(delta: float, distance_like: float, past_zero: bool) -> void:
-	_urgency = urgency_of(distance_like)
+func _update_urgency(delta: float, distance_like: float, past_zero: bool,
+		max_distance: float = 1.0) -> void:
+	_urgency = urgency_of(distance_like, max_distance)
 
 	# A style swap resets phase so the flicker never inherits a breath's
 	# position mid-cycle - it should read as a new pattern starting fresh, not
