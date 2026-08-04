@@ -620,12 +620,16 @@ func _free_cell_after_delay(idx: int, slot: TimerSlot) -> void:
 	# faded_out, which would otherwise leave this coroutine suspended forever -
 	# each abandoned instance is a small permanent leak that accumulates across
 	# rapid restarts. is_instance_valid(slot) going false breaks the wait.
-	if is_instance_valid(slot):
-		var faded := false
-		var mark_faded := func() -> void: faded = true
-		slot.faded_out.connect(mark_faded, CONNECT_ONE_SHOT)
-		while not faded and is_instance_valid(slot):
-			await get_tree().process_frame
+	#
+	# The polled flag lives on the SLOT (TimerSlot.has_faded_out), not here. A
+	# local bool set from a lambda connected to faded_out reads correctly but
+	# never actually flips: GDScript lambdas capture locals by value, so the
+	# handler updates its own copy and this loop spins forever - which left every
+	# resolved timer as an invisible node holding its grid cell for the rest of
+	# the run, so the board never drained and spawns stalled to whenever
+	# _max_simultaneous() next ticked up.
+	while is_instance_valid(slot) and not slot.has_faded_out:
+		await get_tree().process_frame
 	if idx >= 0 and idx < GRID_CELLS and grid_slots[idx] == slot:
 		grid_slots[idx] = null
 	if is_instance_valid(slot):
