@@ -38,6 +38,15 @@ const MUTED := Color("8b90a8")
 # demo. HelpBubble never needs to set it.
 var block_taps: bool = false
 
+# Practice-mode replay pacing, assigned by the host. Plain vars rather than the
+# statically-read HelpScreen consts this component uses everywhere else,
+# because these two are @export instance vars on HelpScreen (Inspector-tunable)
+# and there is no host reference here to read them through - see
+# HelpScreen._build_page_types(), which pushes them in. Defaults match
+# HelpScreen's own so HelpBubble, which sets neither, still behaves sensibly.
+var replay_delay_after_stop: float = 2.0
+var replay_delay_after_expire: float = 2.0
+
 var _demo_token: int = 0
 var _type_tiles: Array[HelpDemoTile] = []
 var _bystander_tiles: Array[HelpDemoTile] = []

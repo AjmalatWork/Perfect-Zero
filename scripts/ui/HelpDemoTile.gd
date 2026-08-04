@@ -111,6 +111,26 @@ var _urgency_envelope: float = 0.0
 var _urgency_phase: float = 0.0
 var _urgency_past_zero: bool = false
 
+# --- Tap capture (practice runs only) ----------------------------------------
+# True only while a run_tappable_*() coroutine is in flight. Outside one, taps
+# are purely a "the player picked this tile" notification for the host and this
+# whole block stays inert, so the scripted play_*() demos are unaffected.
+var _awaiting_tap: bool = false
+var _tap_pressed: bool = false
+var _tap_consumed: bool = false
+# `value` sampled at the instant the finger went DOWN, which is when the player
+# actually committed to their timing.
+#
+# A run only RESOLVES on release, so that a swipe starting on a tile can still
+# be classified as a swipe rather than stopping the timer under it (see
+# _gui_input's own note on why this tile reports taps on release at all). But
+# grading an ~80ms-long tap off the release instant would score every practice
+# stop that much later than the identical tap on the real board, where
+# TimerSlot._gui_input() resolves on press. The PERFECT window is 0.05s wide -
+# so that gap is not a rounding difference, it is wider than the window being
+# practised. Sampling on press and resolving on release gets both properties.
+var _tap_value: float = 0.0
+
 func configure(p_type: int, display_name: String, digit_size: int, name_size: int) -> void:
 	timer_type = p_type
 	_accent = TimerTypeInfo.color_of(p_type)
@@ -198,9 +218,22 @@ func _set_digit_mode(on: bool) -> void:
 # between, and a press-time signal would fire before it could tell a tap from
 # the start of a swipe.
 func _gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and not event.pressed \
-			and event.button_index == MOUSE_BUTTON_LEFT:
-		tapped.emit(self)
+	if not (event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+	if event.pressed:
+		# Press only samples the timing - see _tap_value. Deliberately does not
+		# emit `tapped`, preserving this tile's release-reports-a-tap contract.
+		if _awaiting_tap:
+			_tap_pressed = true
+			_tap_value = value
+		return
+	# _tap_pressed gates this so a run that STARTS with a finger already down
+	# can't be resolved by that finger coming up: without it the release would
+	# grade against a _tap_value belonging to no run at all (a stale 0.0, which
+	# reads as a free PERFECT).
+	if _awaiting_tap and _tap_pressed and not _tap_consumed:
+		_tap_consumed = true
+	tapped.emit(self)
 
 # --- Idle state -------------------------------------------------------------
 
@@ -214,6 +247,7 @@ func _gui_input(event: InputEvent) -> void:
 # tile after it's been reset.
 func idle() -> void:
 	_play_token += 1
+	_clear_tap_capture()
 	_rate_multiplier = 1.0
 	_paused = false
 	value = 0.0
@@ -236,6 +270,7 @@ func idle() -> void:
 # showing) rather than snap it back to idle first.
 func cancel_playback() -> void:
 	_play_token += 1
+	_clear_tap_capture()
 
 # --- Presence (bystander/preview tiles that shouldn't exist until the timer
 # they demonstrate is actually tapped) ---------------------------------------
@@ -520,6 +555,169 @@ func play_blur(duration: float) -> void:
 			digit = randi() % 10
 		if _digit != null:
 			_digit.text = "0.0%d" % digit
+
+# --- Tappable practice runs ---------------------------------------------------
+# The Help screen's practice mode. Where the scripted play_*() demos above tap
+# themselves at a pre-chosen moment to illustrate a rule, these run a real
+# countdown that the PLAYER stops, graded against TimerSlot's own windows via
+# the shared TimerSlot.grade_for_distance()/stop_distance_for() statics - so
+# practising a PERFECT here is practising the same 0.05s the board asks for,
+# not a lookalike with its own boundaries.
+#
+# Each of these is ONE run: it resolves, plays the same feedback a real stop
+# gets, and returns its grade rather than looping. Restart policy is
+# deliberately left to the host, because it differs by page - page 1 restarts
+# each tile independently on its own delay, while the powerups page restarts
+# its whole 2x2 grid only once all four tiles have resolved. Neither is a
+# property of a tile.
+#
+# Returns "" if the run was cancelled mid-flight (idle(), cancel_playback(), or
+# a new play_*() call bumped the token). Callers MUST check for that before
+# treating the result as a grade - an empty string is not a valid grade and
+# will not match any branch of ScoreManager.grade_color()/play_grade().
+
+func _begin_tappable_run() -> void:
+	_clear_tap_capture()
+	_awaiting_tap = true
+
+func _clear_tap_capture() -> void:
+	_awaiting_tap = false
+	_tap_pressed = false
+	_tap_consumed = false
+	_tap_value = 0.0
+
+# Shared exit for all three runs below: same resolution feedback a scripted
+# demo gets, tap state cleared, grade handed back to the awaiting host. Each
+# caller passes its own frozen-digit text because that is the only part of
+# resolving that genuinely differs between the types.
+func _finish_tappable_run(grade: String, frozen_digit: String, bonus_text: String) -> String:
+	_clear_tap_capture()
+	play_grade(grade, frozen_digit, 0.0, bonus_text)
+	return grade
+
+# Normal/Red/Blue/Blackout. Counts down from `start` through zero and on to
+# TimerSlot.EXPIRE_THRESHOLD, which is where the real board gives up on a timer
+# nobody clicked - so "I did nothing" reaches the same FAIL verdict here as it
+# does in a run. `blackout_at` behaves exactly as in play_countdown().
+func run_tappable_countdown(start: float, blackout_at: float = -1.0,
+		bonus_text: String = "") -> String:
+	var token := _play_token
+	value = start
+	_begin_tappable_run()
+	_set_digit_mode(true)
+	_render_countdown(blackout_at)
+	var tick_accum := 0.0
+	var grade := ""
+	while true:
+		await get_tree().process_frame
+		if token != _play_token or not is_instance_valid(self):
+			return ""
+		if _tap_consumed:
+			grade = TimerSlot.grade_for_distance(TimerSlot.stop_distance_for(_tap_value))
+			break
+		if value <= TimerSlot.EXPIRE_THRESHOLD:
+			grade = "FAIL"
+			break
+		if _paused:
+			continue
+		var dt := get_process_delta_time()
+		value = maxf(value - dt * _rate_multiplier, TimerSlot.EXPIRE_THRESHOLD)
+		_render_countdown(blackout_at)
+		_update_urgency(dt, value, value <= 0.0, TimerSlot.URGENCY_RANGE)
+		_apply_urgency_to_panel(blackout_at >= 0.0 and value <= blackout_at)
+		tick_accum += dt
+		if tick_accum >= 1.0:
+			tick_accum = 0.0
+			if blackout_at >= 0.0:
+				AudioManager.play_blackout_tick(get_instance_id())
+			else:
+				var progress: float = clampf(1.0 - value / maxf(start, 0.0001), 0.0, 1.0)
+				AudioManager.play_tick(lerpf(1.0, 2.5, progress), get_instance_id())
+	# The digits freeze at the value the finger went down on, not wherever the
+	# countdown drifted to by the release frame - that is the number being
+	# graded, so showing anything else would have the tile report a grade its
+	# own display contradicts. For a Blackout this also overwrites the "??.??"
+	# it was hiding behind, which is the whole point: the real board reveals the
+	# true stopped value on resolution too, otherwise a player can never learn
+	# what they were actually hitting.
+	var frozen: String = "%.2f" % (_tap_value if _tap_consumed else value)
+	return _finish_tappable_run(grade, frozen, bonus_text)
+
+# Golden. Never counts and never expires - it just churns until the player
+# takes it, which is exactly what the real one does (see
+# TimerSlot._process_golden). No urgency glow: there is no zero being
+# approached for one to signal, the same reason play_blur() has none.
+func run_tappable_golden(bonus_text: String = "") -> String:
+	var token := _play_token
+	_begin_tappable_run()
+	_set_digit_mode(true)
+	var interval := 1.0 / GOLDEN_BLUR_SPEED
+	var accumulator := 0.0
+	var digit := 0
+	while not _tap_consumed:
+		await get_tree().process_frame
+		if token != _play_token or not is_instance_valid(self):
+			return ""
+		var dt := get_process_delta_time()
+		accumulator += dt
+		while accumulator >= interval:
+			accumulator -= interval
+			digit = randi() % 10
+		if _digit != null:
+			_digit.text = "0.0%d" % digit
+	# Guaranteed PERFECT at any moment, landing on a clean 0.00 rather than
+	# whichever blur digit happened to be up - TimerSlot._resolve_stop() does
+	# the same, so the payoff digit is identical every time.
+	return _finish_tappable_run("PERFECT", "0.00", bonus_text)
+
+# Decay. Climbs from 0.00 and grades on which ceiling tier it was stopped in,
+# reaching `miss_end` as a MISS. Decay can never FAIL or cost a life - a
+# locked-in rule, see play_decay_climb() - so there is no expiry branch here
+# beyond that MISS.
+func run_tappable_decay(perfect_end: float, good_end: float, okay_end: float,
+		miss_end: float) -> String:
+	var token := _play_token
+	value = 0.0
+	_begin_tappable_run()
+	_set_digit_mode(true)
+	var shown_tier := -1
+	var tick_accum := 0.0
+	var grade := ""
+	while true:
+		await get_tree().process_frame
+		if token != _play_token or not is_instance_valid(self):
+			return ""
+		if _tap_consumed:
+			grade = TimerSlot.DECAY_TIER_GRADES[
+				_decay_tier_for(_tap_value, perfect_end, good_end, okay_end)]
+			break
+		if value >= miss_end:
+			grade = "MISS"
+			break
+		if not _paused:
+			var dt := get_process_delta_time()
+			value = minf(value + dt * _rate_multiplier, miss_end)
+			tick_accum += dt
+			if tick_accum >= 1.0:
+				tick_accum = 0.0
+				var progress: float = clampf(value / maxf(miss_end, 0.0001), 0.0, 1.0)
+				AudioManager.play_tick(lerpf(1.0, 2.5, progress), get_instance_id())
+			_update_urgency(dt, clampf(value / maxf(miss_end, 0.0001), 0.0, 1.0), false)
+			_apply_urgency_to_panel()
+		if _digit != null:
+			_digit.text = "%.2f" % value
+		var tier := _decay_tier_for(value, perfect_end, good_end, okay_end)
+		if tier != shown_tier:
+			shown_tier = tier
+			var tier_color := TimerTypeInfo.decay_tier_color(tier)
+			_set_border(tier_color)
+			if _panel_style != null:
+				_panel_style.bg_color = tier_color.darkened(0.86)
+			# Keeps the urgency glow's shadow hue on the current tier - see
+			# play_decay_climb()'s own comment on this exact assignment.
+			_accent = tier_color
+	var frozen: String = "%.2f" % (_tap_value if _tap_consumed else value)
+	return _finish_tappable_run(grade, frozen, "")
 
 # --- Reactions (bystander tiles, driven by a Red/Blue tile resolving) -------
 

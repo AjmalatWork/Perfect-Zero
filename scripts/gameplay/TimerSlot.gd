@@ -624,7 +624,7 @@ func _stop_distance() -> float:
 	# curve (and therefore the same points formula) as every other type.
 	if _is_decay():
 		return clampf(current_time / maxf(data.decay_miss_end(), 0.0001), 0.0, 1.0)
-	return snappedf(absf(current_time), 0.01)
+	return stop_distance_for(current_time)
 
 # Fire-and-forget: holds the slot fully visible, fades it out, then signals
 # faded_out. Campaign doesn't listen for this (it frees every slot at once
@@ -740,6 +740,41 @@ func _play_shine() -> void:
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	tween.tween_callback(clip.queue_free)
 
+# The global distance->grade windows, with no dependence on any instance state,
+# so the Help screen's practice tiles can grade a real tap against the exact
+# same boundaries without instancing a TimerSlot - which would drag EventBus,
+# ScoreManager and AudioManager's tick-urgency registry in with it, the whole
+# reason HelpDemoTile exists as a separate cosmetic replica in the first place.
+# Sharing the function rather than the four constants is what stops the Help
+# screen's idea of PERFECT from drifting away from the board's.
+#
+# GOLDEN and DECAY are deliberately NOT handled here: neither grades off a
+# distance at all (GOLDEN is unconditionally PERFECT, DECAY reads its own tier
+# windows off TimerData), so folding them in would mean taking a type and a
+# TimerData as well and inventing a second grading entry point. Callers that
+# can produce those types special-case them ahead of this, exactly as
+# _grade_for_distance() below does.
+#
+# <= at every tier: the upper bound belongs to the stricter grade, so an
+# exact 0.05 is PERFECT, not GOOD; an exact 0.30 is GOOD, not OKAY; etc.
+static func grade_for_distance(distance: float) -> String:
+	if distance <= PERFECT_MAX:
+		return "PERFECT"
+	elif distance <= GOOD_MAX:
+		return "GOOD"
+	elif distance <= OKAY_MAX:
+		return "OKAY"
+	elif distance <= MISS_MAX:
+		return "MISS"
+	return "FAIL"  # too early / too late - StageController ends the stage
+
+# Rounded to the same 2 decimal places the digit display shows - see
+# _stop_distance()'s own comment for why that rounding is load-bearing rather
+# than cosmetic. Static for the same sharing reason as grade_for_distance():
+# the rounding rule and the boundary checks only agree if both sides use both.
+static func stop_distance_for(displayed_value: float) -> float:
+	return snappedf(absf(displayed_value), 0.01)
+
 # distance must already be rounded to 2 decimals (see stop()) so the boundary
 # checks below agree with the displayed digits.
 func _grade_for_distance(distance: float) -> String:
@@ -754,17 +789,7 @@ func _grade_for_distance(distance: float) -> String:
 	if _is_decay():
 		return DECAY_TIER_GRADES[_decay_tier(current_time)]
 
-	# <= at every tier: the upper bound belongs to the stricter grade, so an
-	# exact 0.05 is PERFECT, not GOOD; an exact 0.30 is GOOD, not OKAY; etc.
-	if distance <= PERFECT_MAX:
-		return "PERFECT"
-	elif distance <= GOOD_MAX:
-		return "GOOD"
-	elif distance <= OKAY_MAX:
-		return "OKAY"
-	elif distance <= MISS_MAX:
-		return "MISS"
-	return "FAIL"  # too early / too late - StageController ends the stage
+	return grade_for_distance(distance)
 
 func _play_stop_flash(grade: String) -> void:
 	var flash_tween := create_tween()

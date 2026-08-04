@@ -211,6 +211,23 @@ const BLUE_SETTLE_SEC := 2.5
 func _random_perfect_stop() -> float:
 	return randf_range(0.0, TimerSlot.PERFECT_MAX)
 
+# --- Practice mode replay pacing ----------------------------------------------
+# How long a resolved practice timer holds its grade before starting over. Two
+# separate values because the two endings need different beats: a stop the
+# player earned gets a grade flash, a pop and a grade sign to read (see
+# HelpDemoTile.play_grade), while a timer that simply ran out has nothing to
+# admire and only needs long enough not to feel like it snapped back.
+#
+# @export rather than const, at the user's request, so both can be tuned by
+# feel from the Inspector on scenes/HelpScreen.tscn without a script edit and
+# reimport per attempt - the same reasoning as
+# AudioManager.menu_music_first_play_start_sec. This screen is one of the few
+# in the project with a real .tscn behind it, which is what makes that possible
+# here; TimerTypesLegend is built with .new() and so takes these as plain
+# host-assigned vars instead (see _build_page_types).
+@export var practice_replay_delay_after_stop: float = 2.0
+@export var practice_replay_delay_after_expire: float = 2.0
+
 # --- Page 2 demo timing --------------------------------------------------------
 const PREVIEW_STARTS := [1.9, 2.5, 3.1]
 const NUKE_RUN_SEC := 0.6         # how long the preview timers run before Nuke hits
@@ -787,6 +804,13 @@ func _build_page_types() -> Control:
 	_types_legend = TimerTypesLegend.new()
 	_types_legend.type_tapped.connect(_on_legend_type_tapped)
 	_types_legend.duck_requested.connect(_duck_music)
+	# Pushed in rather than read back out of HelpScreen the way the legend reads
+	# its sizing/timing consts: those are `const` and so reachable statically off
+	# the class, but these two are @export instance vars (Inspector-tunable, see
+	# their declaration) and the legend holds no reference to its host. HelpBubble
+	# builds the same component without setting these and keeps the defaults.
+	_types_legend.replay_delay_after_stop = practice_replay_delay_after_stop
+	_types_legend.replay_delay_after_expire = practice_replay_delay_after_expire
 	_types_legend.build()
 
 	# Portrait binds the description to the tapped tile via the anchored
