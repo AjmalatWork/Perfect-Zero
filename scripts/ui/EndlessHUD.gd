@@ -13,6 +13,27 @@ const EQUATION_FONT_LANDSCAPE := 56
 const EQUATION_FONT_PORTRAIT := 78
 const TOTAL_FONT_LANDSCAPE := 26
 const TOTAL_FONT_PORTRAIT := 36
+# The same portrait bump, applied to the three readouts it originally missed.
+# The equation and TOTAL got their pair; the streak popup, the live streak
+# counter and the milestone stinger were left on their landscape sizes, which
+# left the persistent counter at 24 units (~9.6sp) - the smallest text in live
+# play, and roughly a third the size of the TOTAL sitting directly above it.
+# Scaled by the same ~1.39 ratio the equation/total pairs already use, so the
+# whole readout stack keeps its existing proportions rather than three of five
+# elements being bumped to a different rhythm.
+const STREAK_POPUP_FONT_LANDSCAPE := 38
+const STREAK_POPUP_FONT_PORTRAIT := 53
+const STREAK_COUNTER_FONT_LANDSCAPE := 24
+const STREAK_COUNTER_FONT_PORTRAIT := 34
+const MILESTONE_FONT_LANDSCAPE := 34
+const MILESTONE_FONT_PORTRAIT := 47
+
+# The counter's own box grows with its type - 34 units of height does not hold a
+# 34pt line. Width follows so "STREAK 12" still fits on one line at the bigger
+# size.
+const STREAK_COUNTER_BOX_LANDSCAPE := Vector2(170, 34)
+const STREAK_COUNTER_BOX_PORTRAIT := Vector2(240, 48)
+const STREAK_COUNTER_RIGHT_MARGIN := 20.0
 const EQUATION_HEIGHT_LANDSCAPE := 72.0
 const EQUATION_HEIGHT_PORTRAIT := 100.0
 const TOTAL_HEIGHT_LANDSCAPE := 34.0
@@ -152,6 +173,29 @@ func _total_top() -> float:
 func _popup_top() -> float:
 	return _total_top() + _total_height() + POPUP_GAP
 
+func _streak_popup_font() -> int:
+	return STREAK_POPUP_FONT_PORTRAIT if Layout.is_portrait() else STREAK_POPUP_FONT_LANDSCAPE
+
+func _streak_counter_font() -> int:
+	return STREAK_COUNTER_FONT_PORTRAIT if Layout.is_portrait() else STREAK_COUNTER_FONT_LANDSCAPE
+
+func _milestone_font() -> int:
+	return MILESTONE_FONT_PORTRAIT if Layout.is_portrait() else MILESTONE_FONT_LANDSCAPE
+
+func _streak_counter_box() -> Vector2:
+	return STREAK_COUNTER_BOX_PORTRAIT if Layout.is_portrait() else STREAK_COUNTER_BOX_LANDSCAPE
+
+# Unlike every other readout up here, this one is genuinely corner-pinned rather
+# than full-canvas-width and centred - it sits STREAK_COUNTER_RIGHT_MARGIN from
+# the right edge - so a side cutout or a rounded corner CAN reach it. Inset by
+# SafeArea.right, matching what the rest of the corner-pinned UI in this project
+# already does (the pause icon, the in-game "?", the fail-cross row below).
+func _streak_counter_pos() -> Vector2:
+	var box := _streak_counter_box()
+	return Vector2(
+		Layout.canvas_size.x - STREAK_COUNTER_RIGHT_MARGIN - box.x - SafeArea.right,
+		_popup_top())
+
 func _build() -> void:
 	_equation = _make_label(_equation_font(), NEON)
 	_equation.position = Vector2(0, _equation_top())
@@ -163,7 +207,7 @@ func _build() -> void:
 	_total.size = Vector2(Layout.canvas_size.x, _total_height())
 	add_child(_total)
 
-	_streak_popup = _make_label(38, GOLD)
+	_streak_popup = _make_label(_streak_popup_font(), GOLD)
 	_streak_popup.position = Vector2(0, _popup_top())
 	_streak_popup.size = Vector2(Layout.canvas_size.x, 46)
 	_streak_popup.modulate.a = 0.0
@@ -175,17 +219,17 @@ func _build() -> void:
 	# pause/help icons in the top-right corner - previously at a fixed y=18,
 	# which the touch-target pass's bigger corner icons now overlap. Hidden
 	# below streak 2, same threshold the popup already celebrates at.
-	_streak_counter = _make_label(24, GOLD)
+	_streak_counter = _make_label(_streak_counter_font(), GOLD)
 	_streak_counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_streak_counter.position = Vector2(Layout.canvas_size.x - 190, _popup_top())
-	_streak_counter.size = Vector2(170, 34)
+	_streak_counter.position = _streak_counter_pos()
+	_streak_counter.size = _streak_counter_box()
 	_streak_counter.visible = false
 	add_child(_streak_counter)
 
 	# Milestone stinger - shares the streak popup's vertical slot but is its own
 	# label so a milestone and a streak-growth pop landing on the same frame
 	# don't overwrite each other's text.
-	_milestone_label = _make_label(34, GOLD)
+	_milestone_label = _make_label(_milestone_font(), GOLD)
 	_milestone_label.position = Vector2(0, _popup_top() + POPUP_TO_MILESTONE_GAP)
 	_milestone_label.size = Vector2(Layout.canvas_size.x, 42)
 	_milestone_label.modulate.a = 0.0
@@ -212,12 +256,17 @@ func _build() -> void:
 		CROSS_SEPARATION_PORTRAIT if Layout.is_portrait() else CROSS_SEPARATION_LANDSCAPE)
 	center.add_child(_crosses_row)
 
-# Lifted clear of the gesture navigation bar. The top-of-screen readouts
-# (equation, total, streak popup/counter, milestone) are horizontally centred
-# and sit well inside the vertical extents, so a side cutout can't reach them.
+# Lifted clear of the gesture navigation bar. The equation, TOTAL and milestone
+# labels are full-canvas-width and horizontally centred, so a side cutout can't
+# reach them and they need nothing here. The streak COUNTER is the exception -
+# it is right-aligned and corner-pinned - so it insets too; see
+# _streak_counter_pos(). (The blanket "all the top readouts are centred" claim
+# that used to live here was wrong about exactly that one label.)
 func _apply_safe_area() -> void:
 	if _bottom_row != null:
 		_bottom_row.position = _bottom_row_pos() - Vector2(0, SafeArea.bottom)
+	if _streak_counter != null:
+		_streak_counter.position = _streak_counter_pos()
 
 # Every readout here is either full-canvas-width or centred on it, so an
 # orientation flip is purely a re-measure - nothing moves to a different part of
@@ -235,7 +284,10 @@ func _apply_canvas_metrics() -> void:
 		_streak_popup.position = Vector2(0, _popup_top())
 		_streak_popup.size = Vector2(w, 46)
 	if _streak_counter != null:
-		_streak_counter.position = Vector2(w - 190, _popup_top())
+		# Position comes from _apply_safe_area() at the tail of this function, so
+		# only the box is set here - it has to move before the inset is applied,
+		# not after, since the inset is measured off the box's own width.
+		_streak_counter.size = _streak_counter_box()
 	if _milestone_label != null:
 		_milestone_label.position = Vector2(0, _popup_top() + POPUP_TO_MILESTONE_GAP)
 		_milestone_label.size = Vector2(w, 42)
@@ -251,7 +303,10 @@ func _apply_canvas_metrics() -> void:
 	_apply_safe_area()
 
 func _on_tally_changed(tally: int, mult: float) -> void:
-	_equation.text = "%d   ×   %.1f" % [tally, mult]
+	# Tally separated too - it sits in the same centred column as TOTAL directly
+	# below, so the two have to read the same way or the stack looks like two
+	# different kinds of number.
+	_equation.text = "%s   ×   %.1f" % [ScoreManager.thousands(tally), mult]
 	if mult > _last_mult:
 		_pop(_equation)
 	_last_mult = mult
@@ -269,7 +324,7 @@ func _on_tally_changed(tally: int, mult: float) -> void:
 	_check_milestones(live_total)
 
 func _on_total_changed(total: int) -> void:
-	_total.text = "TOTAL   %d" % total
+	_total.text = "TOTAL   %s" % ScoreManager.thousands(total)
 	_check_overtake(total)
 	_check_milestones(total)
 
@@ -341,7 +396,10 @@ func _show_milestone(value: int) -> void:
 	if _milestone_tween != null and _milestone_tween.is_valid():
 		_milestone_tween.kill()
 
-	_milestone_label.text = "%d!" % value
+	# Separated - the GDD writes this exact ladder as "10,000 -> 25,000 ->
+	# 50,000 -> 100,000 -> 250,000", and past the first few thresholds these are
+	# the longest numbers the game ever prints.
+	_milestone_label.text = "%s!" % ScoreManager.thousands(value)
 	_milestone_label.pivot_offset = _milestone_label.size * 0.5
 	_milestone_label.modulate.a = 1.0
 	_milestone_label.scale = Vector2(1.3, 1.3)

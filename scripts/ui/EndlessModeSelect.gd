@@ -115,7 +115,11 @@ func _build() -> void:
 	col.add_child(title)
 	title.configure("ENDLESS", _fs(PAGE_HEADING_SIZE), TEXT_FILL, NEON)
 
-	col.add_child(_heading("Choose your mode", 26, GOLD))
+	# _fs(26), not a bare 26 - this was the one label on the screen that skipped
+	# the portrait type scale, which at PORTRAIT_SCALE 1.7 left the subtitle
+	# rendering SMALLER than the muted best-score caption below it (_fs(20) = 34)
+	# and inverted against its own hierarchy.
+	col.add_child(_heading("Choose your mode", _fs(26), GOLD))
 
 	var normal := _mode_button("NORMAL", "3 lives", NEON)
 	normal.pressed.connect(func(): _start(3))
@@ -241,7 +245,8 @@ func _target_caption(key: String) -> Label:
 
 func _refresh_target_caption(label: Label, key: String) -> void:
 	var best: int = SaveManager.load_high_score(key)
-	label.text = ("BEAT YOUR BEST: %d" % best) if best > 0 else "NO RECORD YET"
+	label.text = ("BEAT YOUR BEST: %s" % ScoreManager.thousands(best)) if best > 0 \
+		else "NO RECORD YET"
 
 func _heading(text: String, font_size: int, accent: Color, outline: int = 5) -> Label:
 	var l := Label.new()

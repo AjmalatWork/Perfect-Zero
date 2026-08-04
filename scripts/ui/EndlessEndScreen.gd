@@ -19,10 +19,10 @@ class_name EndlessEndScreen
 # a grade); GOLD is the outcome - the score and any record it set; NEON is
 # reserved for the one interactive thing on screen (RETRY); MUTED carries the
 # supporting stats (streak, time, the record line) so gold arrives unshared at
-# the score. GREEN is kept only as a tier colour, not a static text colour.
+# the score. Green appears nowhere on this screen - see TIER_COLORS below for
+# why the mid tier stopped using it.
 const NEON := Color("22d3ff")
 const GOLD := Color("ffd23f")
-const GREEN := Color("39ff9e")
 const FAIL_RED := Color("ff2e5e")
 const MUTED := Color("8b90a8")
 const TEXT_FILL := Color("dfe3ee")
@@ -98,8 +98,22 @@ const FLOURISH_DELAY := 0.35
 # Tier scaling, mirroring the stage-end reveal's approach: a discrete step
 # rather than a continuous lerp, so a strong run is recognisable by how its
 # summary looks and not merely by the number on it.
+# Cuts are deliberately NOT StageResultScreen's [0.55, 0.85]: an Endless run's
+# average grade quality and a hand-authored Arcade stage's are different
+# distributions, so identical cuts would not produce comparable tier
+# frequencies. The colours, however, are now identical to that screen's on
+# purpose - see below.
 const TIER_CUTS := [0.45, 0.9]
-const TIER_COLORS := [Color("6b7080"), Color("39ff9e"), Color("ffd23f")]
+# Grey -> cyan -> gold, matching StageResultScreen.TIER_COLORS exactly. The
+# middle step was green (39ff9e), which is the same thing that screen already
+# fixed and for the same reason: green is a third colour language on a screen
+# whose palette has two, and it tints the mid-tier result green-black over this
+# game's dark blue-black backdrop. Green survives only as the game-wide GOOD
+# grade colour on the transient per-stop signs (ScoreManager.GRADE_COLORS),
+# never as screen furniture. This is consumed by _tint_dividers() below, so on a
+# mid-quality run it sits on the settled summary for as long as it is up - not a
+# transient flash.
+const TIER_COLORS := [Color("6b7080"), Color("22d3ff"), Color("ffd23f")]
 const TIER_PUNCH := [1.2, 2.0, 3.2]
 const TIER_BURST_INTENSITY := [0.0, 0.45, 1.0]
 
@@ -329,10 +343,10 @@ func _show_summary() -> void:
 	if runner.is_new_best:
 		if runner.previous_best_score > 0:
 			caption = "PREVIOUS BEST (%s)" % _mode_name()
-			value = "%d" % runner.previous_best_score
+			value = ScoreManager.thousands(runner.previous_best_score)
 	elif runner.best_score > 0:
 		caption = "BEST (%s)" % _mode_name()
-		value = "%d" % runner.best_score
+		value = ScoreManager.thousands(runner.best_score)
 
 	_record_caption.text = caption
 	_record_label.text = value

@@ -461,11 +461,22 @@ func _primary_button(text: String, accent: Color) -> Button:
 # uniform set of icon tiles rather than a mix of shapes. See
 # ICON_SIZE_LANDSCAPE / ICON_SIZE_PORTRAIT for the two sizes.
 
-# Hand-authored SVGs (icons/title_*.svg) - same house style as the existing
-# powerup icons (icons/powerup_*.svg): translucent accent fill + bold accent
-# stroke with a glow filter. Loaded as a texture rather than drawn at runtime
-# since resvg/thorvg's bezier rendering reads far cleaner at this size than
-# hand-rolled polygon/arc approximations did.
+# Hand-authored SVGs (icons/title_*.svg), in this project's icon house style:
+# translucent accent fill plus a bold accent-coloured stroke, and NO glow
+# filter. The glow comes from the button's own border/shadow underneath, not
+# from the icon - Godot's runtime SVG rasterizer (thorvg) doesn't composite
+# feGaussianBlur/feMerge the way a browser does, and blurs the whole shape
+# instead of adding a halo behind a crisp one. (No <text> either, for the same
+# family of reason - thorvg renders it blank.)
+#
+# This comment used to cite icons/powerup_*.svg as the reference "with a glow
+# filter". Those three files really did carry one, were never loaded by
+# anything, and have since been deleted - so the one note a contributor would
+# read before authoring a new icon was recommending the broken pattern.
+#
+# Loaded as a texture rather than drawn at runtime since resvg/thorvg's bezier
+# rendering reads far cleaner at this size than hand-rolled polygon/arc
+# approximations did.
 func _icon_button_texture(texture_path: String, accent: Color, handler: Callable) -> Button:
 	var button := Button.new()
 	var portrait := Layout.is_portrait()

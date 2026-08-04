@@ -139,16 +139,12 @@ var _hero_dot_tween: Tween
 
 # Grouped thousands. The Best column exists to be compared down its length, and
 # five unbroken digits are measurably slower to read than "36,000".
+#
+# The implementation moved to ScoreManager.thousands() - being private here is
+# what made this screen the only one in the game that separated its numbers.
+# Kept as a thin forwarder so this screen's own call sites read unchanged.
 static func _thousands(n: int) -> String:
-	var digits := str(absi(n))
-	var out := ""
-	var count := 0
-	for i in range(digits.length() - 1, -1, -1):
-		out = digits[i] + out
-		count += 1
-		if count % 3 == 0 and i > 0:
-			out = "," + out
-	return ("-" + out) if n < 0 else out
+	return ScoreManager.thousands(n)
 
 func _s() -> float:
 	return PORTRAIT_SCALE if Layout.is_portrait() else 1.0

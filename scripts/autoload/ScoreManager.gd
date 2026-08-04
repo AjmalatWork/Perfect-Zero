@@ -35,6 +35,29 @@ var run_best_streak: int = 0
 static func grade_color(grade: String) -> Color:
 	return GRADE_COLORS.get(grade, Color.WHITE)
 
+# Grouped thousands, for every score the player reads. Five unbroken digits are
+# measurably slower to read than "36,000", and the GDD writes score figures this
+# way in both places it shows one ("BEAT YOUR BEST: 17,240", and the milestone
+# ladder 10,000 -> 25,000 -> 50,000).
+#
+# Lives here rather than on any one screen because it was previously a private
+# helper on ScoresScreen and therefore reachable, in practice, nowhere else -
+# which left Scores as the ONLY screen in the game that separated its numbers.
+# A player finishing an Endless run read "17240" on the summary and "17,240" on
+# the Scores screen two taps later: the same number, two formats. ScoreManager
+# already owns the scores and already exposes a static formatter-ish helper
+# (grade_color above), so this is the one place every screen can reach.
+static func thousands(n: int) -> String:
+	var digits := str(absi(n))
+	var out := ""
+	var count := 0
+	for i in range(digits.length() - 1, -1, -1):
+		out = digits[i] + out
+		count += 1
+		if count % 3 == 0 and i > 0:
+			out = "," + out
+	return ("-" + out) if n < 0 else out
+
 # Continuous proximity base points: full 200 at distance 0, quadratic falloff to
 # 0 as distance approaches 1.0. No cliff between grade tiers.
 static func base_points(distance: float) -> int:

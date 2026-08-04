@@ -358,7 +358,9 @@ func _style_button(button: Button, accent: Color, font_size: int = 28) -> void:
 	button.add_theme_font_size_override("font_size", font_size)
 	button.add_theme_color_override("font_color", Color.WHITE)
 	button.add_theme_color_override("font_outline_color", accent)
-	button.add_theme_constant_override("outline_size", 5)
+	# 4, matching every other screen's button outline (Title/Credits/Scores/Help/
+	# Options/Endless Mode Select all use 4) - this screen was the only one at 5.
+	button.add_theme_constant_override("outline_size", 4)
 	button.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.7))
 	button.add_theme_stylebox_override("normal", _make_box(accent, 0.85, 0.35, 8))
 	button.add_theme_stylebox_override("hover", _make_box(accent, 0.7, 0.5, 12))

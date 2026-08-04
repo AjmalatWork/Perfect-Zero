@@ -85,7 +85,7 @@ func _build_flames() -> void:
 	add_child(_flames)  # added last -> renders above the labels
 
 func _on_score_changed(score: int, multiplier: float) -> void:
-	score_label.text = "SCORE  %d" % score
+	score_label.text = "SCORE  %s" % ScoreManager.thousands(score)
 	multiplier_label.text = "x%.1f" % multiplier
 
 	# Glow shifts cyan -> hot pink and thickens as the multiplier climbs 1.0 -> 4.0.

@@ -214,8 +214,17 @@ func _build() -> void:
 	reduce.scale_by(_s())
 	reduce.set_initial(Settings.reduce_intensity)
 	reduce.toggled.connect(func(on): Settings.set_reduce_intensity(on))
-	col.add_child(_toggle_field("Reduce effects",
-		"Fewer particles, no screen shake", reduce))
+	# The subtitle has to describe what the toggle ACTUALLY does. It previously
+	# read "Fewer particles, no screen shake", which was wrong on the first half:
+	# particle bursts are deliberately left alone (see the comment above, GDD §9,
+	# and Settings.motion_effects_enabled()'s own note - effect_scale() reaches
+	# label pops and glow strength, never a burst or particle count). A player
+	# reading that would turn this on to reduce visual clutter and get none of
+	# what it promised. The label carries "screen" for the same reason: without
+	# it, "Reduce effects" reads as a global effects switch, which is exactly the
+	# misreading the old subtitle then confirmed.
+	col.add_child(_toggle_field("Reduce screen effects",
+		"No screen shake, flashes or camera punch", reduce))
 
 	# Dev-only test override - never present in a release export. Cycles
 	# OFF -> PERFECT -> GOOD -> OFF; while non-OFF, every click on any timer

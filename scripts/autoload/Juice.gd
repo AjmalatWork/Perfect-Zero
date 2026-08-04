@@ -64,14 +64,30 @@ const ABERRATION_COLOR := Color(0.9, 0.15, 0.2, 0.22)
 # tells rather than unrelated effects. They can legitimately be on at once (a
 # hot streak on your last life), so - exactly like Overclock vs. heat - they are
 # separated by BEHAVIOUR as well as hue: heat is a steady warm bloom whose alpha
-# simply tracks the streak, while this is a deeper red that never sits still. The
-# slow pulse is the distinguishing signal, not the colour.
+# simply tracks the streak, while this is a deeper red that never sits still.
+# Colour and motion both carry the distinction now - see LOW_LIFE_COLOR for why
+# leaning on the pulse alone was not enough against Overclock.
 #
 # Deliberately slow and moderate: this is a calm-but-present "you are one mistake
 # from the end", not an alarm. A fast or high-alpha version of this reads as
 # panic and makes the board harder to actually play.
-const LOW_LIFE_COLOR := Color("ff1030")
-const LOW_LIFE_ALPHA := 0.26
+# A deep wine/burgundy, NOT the hot near-pure red this used to be (ff1030).
+# That value sat 16/255 of blue away from OVERCLOCK_COLOR (ff1040) - the same
+# red for any practical purpose - and the two are both ambient screen-edge
+# states that can legitimately be on at once (Overclock on your last life), so
+# the whole burden of telling them apart fell on motion alone. This hue leans
+# blue and dark where Overclock's stays hot and saturated, which is what lets
+# the pair differ in BOTH colour and geometry - the same bar the GDD sets for
+# Overclock vs. streak heat. Burgundy also suits this state's brief better than
+# a brick red would: calm and present, not an alarm.
+#
+# The alpha rise is not cosmetic. This vignette is a plain alpha-blended
+# GradientTexture2D over a near-black (#0B0B12) backdrop, so a darker source at
+# the same alpha would mostly just read as "the same red, dimmer" - which is the
+# exact failure mode being fixed. 0.32 holds roughly the previous perceived
+# presence while the hue does the separating.
+const LOW_LIFE_COLOR := Color("8c0f3c")
+const LOW_LIFE_ALPHA := 0.32
 const LOW_LIFE_PULSE_HZ := 0.55      # ~1.8s per breath
 const LOW_LIFE_PULSE_DEPTH := 0.45   # fraction of alpha the pulse swings
 const LOW_LIFE_FADE := 1.6
@@ -163,6 +179,8 @@ var _shield_flare_until_ms: int = 0
 # geometry rather than only hue: a deeper red, and hard bands clamped to the
 # screen edges instead of a bloom. That's what keeps "the board is hot" and
 # "Overclock is running" separable when a high streak coincides with the window.
+# Kept in sync with PowerupSystem.COLORS[Kind.OVERCLOCK] (same hex) so the
+# button, its icon, the wind-up flash and these bands are all one colour.
 const OVERCLOCK_COLOR := Color("ff1040")
 const OVERCLOCK_BAND_ALPHA := 0.34
 const OVERCLOCK_BAND_THICKNESS := 46.0

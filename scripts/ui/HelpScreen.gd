@@ -65,11 +65,19 @@ const CHIP_SIZE := Vector2(132, 80)
 # The powerup activation buttons aren't timers, so they keep their own
 # Help-screen-scaled rectangle rather than the real board's square cell size.
 const POWERUP_BUTTON_SIZE := Vector2(150, 92)
-# Width sized from the longest label actually on a tab: "POWERUPS" measures 180
-# at the portrait font size (Font.get_string_size, not estimated), and the
-# button's own stylebox adds 8 either side - so 140 x 1.5 = 210 clears 196 with
-# real slack. The tab row is the widest fixed-width thing on this screen, so
-# over-reserving here is what squeezes the side margins in portrait.
+# A FLOOR, not a clamp - a Button grows past custom_minimum_size to fit its own
+# text, so only the tab that needs more width takes it.
+#
+# 140 x 1.5 = 210 was sized against "POWERUPS", which measures 180 at the
+# portrait font size (Font.get_string_size, not estimated) plus 8 either side
+# from the button's own stylebox. Page 1's tab is now "TIMER TYPES" (renamed
+# from "TIMERS" to match both the GDD and the in-game Help bubble's own heading,
+# which already agreed with each other), and that string is the longest on the
+# row at roughly 251 units. Only that one tab grows: the row comes to about
+# 251 + 210 + 210 + two 15-unit separations = ~701 against the 820 available
+# inside this screen's 40-unit portrait side margins, so there is real slack
+# left. The tab row is still the widest fixed-width thing on this screen, so
+# over-reserving here is what squeezes those margins.
 const TAB_SIZE := Vector2(140, 80)
 # Reserved so the description swapping between a one-line and a three-line
 # string can't reflow the page under the player's finger mid-read. 88 still
@@ -442,7 +450,15 @@ func _build() -> void:
 	# 96 raw -> 144 canvas units in portrait (57.6dp), clearing the 56dp target -
 	# measured at 38.3dp before this fix. See the CHIP_SIZE/TAB_SIZE comment for
 	# the same dp-per-canvas-unit derivation.
-	back.custom_minimum_size = Vector2(200, 96) * _s()
+	#
+	# Gated to portrait, like every other screen's BACK does it (Level Select,
+	# Credits, Endless Mode Select all write this same ternary; Options/Scores
+	# route it through _back_h()). Landscape is desktop/web with a mouse and has
+	# no dp floor to clear, so it keeps the shared 200x64 - without the gate this
+	# screen's BACK was 50% taller than the other five on the one platform where
+	# they sit side by side in the same session.
+	var back_h: float = 96.0 if Layout.is_portrait() else 64.0
+	back.custom_minimum_size = Vector2(200, back_h) * _s()
 	back.pressed.connect(_on_back)
 	var back_wrap := CenterContainer.new()
 	back_wrap.add_child(back)
@@ -463,7 +479,10 @@ func _build_tab_row() -> Control:
 	row.add_theme_constant_override("separation", _fs(10))
 	for i in range(PAGE_COUNT):
 		var tab := Button.new()
-		tab.text = ["TIMERS", "POWERUPS", "SCORING"][i]
+		# "TIMER TYPES", not "TIMERS" - the same page is called that by the GDD and
+		# by HelpBubble.PAGE_TITLES, so this was the only one of the three names
+		# for it that disagreed. See TAB_SIZE for the width this costs.
+		tab.text = ["TIMER TYPES", "POWERUPS", "SCORING"][i]
 		tab.custom_minimum_size = TAB_SIZE * _s()
 		tab.add_theme_font_size_override("font_size", _fs(TAB_FONT_SIZE))
 		tab.add_theme_constant_override("outline_size", 4)
