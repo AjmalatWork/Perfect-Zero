@@ -51,7 +51,14 @@ const SECTION_LABEL_SIZE := 36
 # The one-line explanation under a toggle. "Reduce screen effects" said nothing
 # about what it actually does, which is kill screen shake, camera punch,
 # hit-stop and full-screen flashes outright for motion sensitivity.
-const SUBTITLE_SIZE := 36
+#
+# Deliberately smaller than SECTION_LABEL_SIZE (was equal to it, at 36) - the
+# two are different roles that happened to share a number: SECTION_LABEL is an
+# uppercase eyebrow that only needs to be found, this is a sentence that needs
+# to be read. Case already separates them, but two labels the same size sitting
+# both MUTED made the sentence read as a second, quieter eyebrow rather than
+# actual explanatory copy underneath the toggle's own label.
+const SUBTITLE_SIZE := 30
 
 # Absolute canvas units, deliberately NOT multiplied by _s(): this is a width
 # budget against a fixed-width canvas, so scaling it would just re-introduce the
@@ -572,7 +579,10 @@ func _box(accent: Color, darken: float) -> StyleBoxFlat:
 # whole row is the touch target - hence MOUSE_FILTER_IGNORE here.
 class NeonToggle extends Control:
 	const SIZE := Vector2(78, 42)
-	const ACCENT := Color("22d3ff")
+	# Was its own Color("22d3ff") literal, duplicating OptionsPanel.NEON rather
+	# than referencing it - harmless while both happened to agree, but one more
+	# place for cyan to silently drift if either is ever repainted.
+	const ACCENT := OptionsPanel.NEON
 	const OFF_TRACK := Color("3a4050")
 
 	signal toggled(on: bool)
@@ -664,7 +674,9 @@ class NeonSlider extends Control:
 	const TOUCH_HEIGHT := 100.0
 	const TRACK_HEIGHT := 8.0
 	const KNOB_RADIUS := 11.0
-	const ACCENT := Color("22d3ff")
+	# Was its own Color("22d3ff") literal - see NeonToggle.ACCENT's comment above,
+	# same duplication, same fix.
+	const ACCENT := OptionsPanel.NEON
 
 	signal value_changed(v: float)
 

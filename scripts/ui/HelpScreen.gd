@@ -546,7 +546,10 @@ func _style_tabs() -> void:
 		var active := i == _page_index
 		var accent: Color = NEON if active else MUTED
 		tab.add_theme_color_override("font_color", Color.WHITE if active else MUTED)
-		tab.add_theme_color_override("font_outline_color", accent if active else Color(0, 0, 0, 0.6))
+		# MUTED, not black - every other de-emphasized outline in the game (Help's
+		# own inactive tabs used to be the one exception) fades toward MUTED rather
+		# than dropping to a plain black outline.
+		tab.add_theme_color_override("font_outline_color", accent if active else Color(MUTED.r, MUTED.g, MUTED.b, 0.6))
 		for state in ["normal", "hover", "pressed"]:
 			tab.add_theme_stylebox_override(state, _tab_box(accent, active))
 

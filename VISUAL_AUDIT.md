@@ -29,7 +29,13 @@ The audit below was written first and is preserved as-written. Every finding in 
 | 4.2 | Help dots not colour-coded | **Closed, not a bug** — design call Q1; GDD §8 reworded instead |
 | 2.4 | Bonus-stage gold vs badge contrast | **Closed, accepted** — design call Q2; no change |
 | 11.3 | Reveal screens' tier cuts differ | **Closed, deliberate** — Q4; a comment now records *why* so it isn't re-flagged |
-| 1.2, 1.3, 3.4, 3.5, 4.4, 4.5, 6.3, 6.4, 15.2, 3.6 | Remaining Minor items | **Not actioned** — left documented; see §2 for each |
+| 6.3 | Options' toggle subtitle same size as the section eyebrows | **Fixed** — `SUBTITLE_SIZE` 36 → 30 |
+| 6.4 | `NeonToggle`/`NeonSlider` redeclare `Color("22d3ff")` instead of referencing `NEON` | **Fixed** — both now `OptionsPanel.NEON` |
+| 4.4 | Help's inactive tabs outline in black, the only black outline in the game | **Fixed** — → `MUTED @ 0.6` |
+| 3.5 | Endless Mode Select's caption uses `TEXT_FILL @ 0.75` instead of `MUTED` | **Fixed** — `MUTED` const added, caption uses it |
+| 3.4 | Endless Mode Select's BACK font (`_fs(30)`) was the largest of six screens | **Fixed** — overridden to `_fs(28)`, matching Help/Options |
+| 1.2 | Title's version label had no portrait size at all (fixed `16` ≈ 6.4dp) | **Fixed** — `_PORTRAIT` pair added, 16/24 |
+| 1.3, 4.5, 15.2, 3.6 | Remaining Minor items | **Not actioned** — left documented; see §2 for each. 4.5/15.2 flagged as needing more design judgment than a mechanical fix; 3.6 deprioritized as low-value/high-effort; 1.3 closed as consistent-with-Options, no action needed |
 
 **GDD edits made:** §8 page-dot wording (per Q1), §8 BACK sizing (records the deliberate 220 class), §10 the "effective dp unified" claim (was never true — corrected to "every screen clears the floor").
 

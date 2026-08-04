@@ -409,13 +409,24 @@ func _on_locked_endless_tapped() -> void:
 
 # --- Build number -----------------------------------------------------------
 
+# 16 raw is ~6.4dp effective in landscape - fine at desktop viewing distance,
+# and the ONLY unscaled size on this screen (everything else has an explicit
+# _PORTRAIT constant). Left genuinely small in portrait too - this is
+# deliberately the lowest-emphasis element on the screen, a build tag rather
+# than content - but 16 was never revisited for a phone and read closer to
+# invisible than "quiet" there. 24 keeps it clearly the smallest, least
+# prominent text on the screen while no longer being illegible.
+const VERSION_LABEL_FONT_LANDSCAPE := 16
+const VERSION_LABEL_FONT_PORTRAIT := 24
+
 func _build_version_label() -> void:
 	var version_text := build_version
 	if version_text.is_empty():
 		version_text = str(ProjectSettings.get_setting("application/config/version", ""))
 	var label := Label.new()
 	label.text = "V%s" % version_text
-	label.add_theme_font_size_override("font_size", 16)
+	label.add_theme_font_size_override("font_size",
+		VERSION_LABEL_FONT_PORTRAIT if Layout.is_portrait() else VERSION_LABEL_FONT_LANDSCAPE)
 	label.add_theme_color_override("font_color", Color(1, 1, 1, 0.3))
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE

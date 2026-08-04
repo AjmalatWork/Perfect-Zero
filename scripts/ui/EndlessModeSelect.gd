@@ -6,6 +6,7 @@ const RED := Color("ff2e5e")
 const GOLD := Color("ffd23f")
 const LOCKED_ACCENT := Color("8b90a8")
 const TEXT_FILL := Color("dfe3ee")
+const MUTED := Color("8b90a8")  # same hex as LOCKED_ACCENT - a different role (muted body text vs. a locked control's accent), so kept as its own name rather than reused across two meanings
 
 @export var runner: EndlessRunner
 @export var campaign_navigator: CampaignNavigator
@@ -142,6 +143,11 @@ func _build() -> void:
 	# (desktop/web) keeps the original 64.
 	var back_h: float = 72.0 if Layout.is_portrait() else 64.0
 	back.custom_minimum_size = Vector2(200, back_h) * _s()
+	# _button() sets font_size to _fs(30) for the mode buttons - the largest BACK
+	# font of any screen in the game, and large enough to visually compete with
+	# the mode buttons' own _fs(30) name/lives labels sitting right above it.
+	# Overridden down to _fs(28), matching Help/Options' BACK.
+	back.add_theme_font_size_override("font_size", _fs(28))
 	back.pressed.connect(_on_back)
 	col.add_child(_wrap(back))
 
@@ -238,8 +244,11 @@ func _target_caption(key: String) -> Label:
 	var l := Label.new()
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.add_theme_font_size_override("font_size", _fs(20))
-	l.add_theme_color_override("font_color", TEXT_FILL)
-	l.modulate.a = 0.75
+	# MUTED, not TEXT_FILL@0.75 alpha - every other screen expresses "muted
+	# supporting text" as the same MUTED colour rather than a faded TEXT_FILL, so
+	# this was the one place "muted" meant something different from the rest of
+	# the project. Alpha dropped since MUTED is already muted on its own.
+	l.add_theme_color_override("font_color", MUTED)
 	_refresh_target_caption(l, key)
 	return l
 
