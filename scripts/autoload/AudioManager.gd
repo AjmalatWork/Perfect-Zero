@@ -39,6 +39,12 @@ const MENU_MUSIC_FADE := 0.6
 # script edit + reimport per attempt; see _menu_music_first_play_done for how
 # the "only once" part is enforced.
 @export var menu_music_first_play_start_sec: float = 13.0
+# How long that same first play takes to reach full volume - longer than
+# MENU_MUSIC_FADE's ordinary 0.6s (see _update_menu_music) because cutting
+# straight into the middle of the track, rather than its own quiet intro,
+# needs a softer entrance to not read as an abrupt jump-cut. Also @export for
+# by-ear tuning alongside the start position above.
+@export var menu_music_first_play_fade_sec: float = 2.0
 const SILENT_DB := -80.0
 const NYQUIST := MIX_RATE * 0.5
 const POOL_SIZE := 12
@@ -343,6 +349,7 @@ func _update_menu_music(state: int) -> void:
 	# (see _input) - calling play() on a suspended AudioContext is the one thing
 	# worth avoiding there. _audio_unlocked is true from the start everywhere
 	# else, so desktop starts the track immediately.
+	var is_first_play := false
 	if want and not _menu_music.playing:
 		if not _audio_unlocked:
 			return
@@ -350,15 +357,22 @@ func _update_menu_music(state: int) -> void:
 		if _menu_music_first_play_done:
 			_menu_music.play()
 		else:
+			is_first_play = true
 			_menu_music_first_play_done = true
 			_menu_music.play(menu_music_first_play_start_sec)
 	elif not want and not _menu_music.playing:
 		return  # already stopped, nothing to fade
 
 	var target_db: float = linear_to_db(MENU_MUSIC_BASE_LINEAR) if want else SILENT_DB
+	# The cold-open trim above skips straight into the track rather than
+	# starting on a natural quiet intro, so a cut-in at the ordinary
+	# menu-to-menu fade speed reads as abrupt. Only this first play gets the
+	# longer, more deliberate fade; every later transition (menu swaps, the
+	# loop restarting) keeps MENU_MUSIC_FADE's snappier one.
+	var fade_sec: float = menu_music_first_play_fade_sec if is_first_play else MENU_MUSIC_FADE
 	_menu_music_tween = create_tween()
 	_menu_music_tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
-	_menu_music_tween.tween_property(_menu_music, "volume_db", target_db, MENU_MUSIC_FADE)
+	_menu_music_tween.tween_property(_menu_music, "volume_db", target_db, fade_sec)
 	if not want:
 		_menu_music_tween.tween_callback(_menu_music.stop)
 
