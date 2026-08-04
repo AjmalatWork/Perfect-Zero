@@ -27,6 +27,24 @@ signal tapped(tile: HelpDemoTile)
 # rather than a sequential counter, which reads as blur instead of counting.
 const GOLDEN_BLUR_SPEED := 28.0
 
+# --- Zero-proximity urgency glow --------------------------------------------
+# Mirrors TimerSlot's own version of this feature (see that file's constants
+# block for the full design rationale - formula, zero-crossing pulse-style
+# swap, per-type handling) so the Help screen teaches the same visual language
+# the real board uses rather than a lookalike with its own separately-tuned
+# feel. Values are scaled down from TimerSlot's own (18/0.35/3.0) for this
+# tile's smaller footprint (128-200px here vs. the board's own cell size) -
+# proportionally similar strength, not an unrelated one.
+const URGENCY_GLOW_SIZE_BONUS := 12.0
+const URGENCY_ALPHA_BONUS := 0.35
+const URGENCY_BORDER_WIDTH_BONUS := 2.0
+const URGENCY_BREATH_HZ_MIN := 0.4
+const URGENCY_BREATH_HZ_MAX := 2.2
+const URGENCY_FLICKER_HZ_MIN := 5.0
+const URGENCY_FLICKER_HZ_MAX := 11.0
+const URGENCY_PULSE_FLOOR := 0.4
+const DECAY_URGENCY_PULSE_DEPTH := 0.16
+
 # The project's base text fill. Names are drawn in it with the type accent as
 # outline - the same treatment the digits already use - rather than painting
 # the accent straight onto the glyph. TimerTypeInfo.gd warns about exactly this
@@ -36,6 +54,18 @@ const GOLDEN_BLUR_SPEED := 28.0
 # instead puts every type at full contrast without touching the deliberately
 # recessive panel colours.
 const TEXT_FILL := Color("dfe3ee")
+
+# configure()'s own baseline panel look, named so the urgency glow below can
+# compose with it instead of assuming a duplicated literal.
+const BASE_SHADOW_SIZE := 10.0
+const BASE_SHADOW_ALPHA := 0.30
+const BASE_BORDER_WIDTH := 3.0
+# set_selected()'s own ring look, named for the same reason - the urgency glow
+# still shows through while a tile is selected (composing with this elevated
+# baseline instead), rather than either fighting it or going dark.
+const SELECTED_SHADOW_SIZE := 20.0
+const SELECTED_SHADOW_ALPHA := 0.55
+const SELECTED_BORDER_WIDTH := 5.0
 
 var timer_type: int = TimerData.TimerType.NORMAL
 var value: float = 0.0
@@ -69,6 +99,18 @@ var _grade_sign_tween: Tween
 var _pop_tween: Tween
 var _dim_tween: Tween
 
+# --- Zero-proximity urgency glow state --------------------------------------
+# Mirrors TimerSlot's own fields exactly - see that file's constants block for
+# the full design rationale. This tile drives the SAME formula off its own
+# local `value`, never through EventBus/AudioManager's tick-urgency ranking or
+# any other live-gameplay path, keeping the cosmetic-only isolation every other
+# system on this tile already has intact.
+var _urgency: float = 0.0
+var _urgency_pulse: float = 0.0
+var _urgency_envelope: float = 0.0
+var _urgency_phase: float = 0.0
+var _urgency_past_zero: bool = false
+
 func configure(p_type: int, display_name: String, digit_size: int, name_size: int) -> void:
 	timer_type = p_type
 	_accent = TimerTypeInfo.color_of(p_type)
@@ -80,10 +122,10 @@ func configure(p_type: int, display_name: String, digit_size: int, name_size: in
 	_panel_style = StyleBoxFlat.new()
 	_panel_style.bg_color = _base_bg
 	_panel_style.set_corner_radius_all(14)
-	_panel_style.set_border_width_all(3)
+	_panel_style.set_border_width_all(int(BASE_BORDER_WIDTH))
 	_panel_style.border_color = _accent
-	_panel_style.shadow_color = Color(_accent.r, _accent.g, _accent.b, 0.30)
-	_panel_style.shadow_size = 10
+	_panel_style.shadow_color = Color(_accent.r, _accent.g, _accent.b, BASE_SHADOW_ALPHA)
+	_panel_style.shadow_size = int(BASE_SHADOW_SIZE)
 	_panel_style.shadow_offset = Vector2.ZERO
 	add_theme_stylebox_override("panel", _panel_style)
 
@@ -270,6 +312,13 @@ func play_countdown(start: float, stop_at: float = 0.0, blackout_at: float = -1.
 		var dt := get_process_delta_time()
 		value = maxf(value - dt * _rate_multiplier, stop_at)
 		_render_countdown(blackout_at)
+		# `value` mirrors TimerSlot.current_time exactly for this coroutine - a
+		# signed distance-from-zero, clamped at stop_at rather than continuing
+		# negative (play_overrun below is the coroutine for that territory) - so
+		# `value <= 0.0` is the correct flicker-style trigger even though it
+		# practically only ever fires on this loop's very last frame.
+		_update_urgency(dt, value, value <= 0.0)
+		_apply_urgency_to_panel(blackout_at >= 0.0 and value <= blackout_at)
 		tick_accum += dt
 		if tick_accum >= 1.0:
 			tick_accum = 0.0
@@ -308,6 +357,13 @@ func play_overrun(limit: float) -> void:
 		value = minf(value + dt * _rate_multiplier, limit)
 		if _digit != null:
 			_digit.text = "%.2f" % value
+		# Always the flicker/past-zero style, hardcoded rather than derived from
+		# value's sign: this coroutine ONLY EVER represents a timer that's
+		# already run past its zero moment (see the doc comment above), and
+		# `value` here is a positive MAGNITUDE of time-past-zero rather than a
+		# signed current_time - a sign check would never trigger past frame one.
+		_update_urgency(dt, value, true)
+		_apply_urgency_to_panel()
 		tick_accum += dt
 		if tick_accum >= 1.0:
 			tick_accum = 0.0
@@ -339,6 +395,14 @@ func play_decay_climb(perfect_end: float, good_end: float, okay_end: float, miss
 				tick_accum = 0.0
 				var progress: float = clampf(value / maxf(miss_end, 0.0001), 0.0, 1.0)
 				AudioManager.play_tick(lerpf(1.0, 2.5, progress), get_instance_id())
+			# Same input TimerSlot._process_decay() feeds its own urgency update:
+			# elapsed time normalised to the full window (0 at spawn, 1 at the
+			# ceiling burning out), not |distance| - Decay has no zero to
+			# approach. Inside the `not _paused` guard so a Blue-freeze reaction
+			# on this tile holds the glow exactly where it was, same as the real
+			# board.
+			_update_urgency(dt, clampf(value / maxf(miss_end, 0.0001), 0.0, 1.0), false)
+			_apply_urgency_to_panel()
 		if _digit != null:
 			_digit.text = "%.2f" % value
 		var tier := _decay_tier_for(value, perfect_end, good_end, okay_end)
@@ -348,6 +412,12 @@ func play_decay_climb(perfect_end: float, good_end: float, okay_end: float, miss
 			_set_border(tier_color)
 			if _panel_style != null:
 				_panel_style.bg_color = tier_color.darkened(0.86)
+			# _accent has to track the tier too, matching
+			# TimerSlot._apply_decay_tier()'s own reassignment - the urgency
+			# glow above reads _accent for its shadow colour's RGB, and without
+			# this it would stay frozen at configure()'s tier-0 hue for the
+			# whole climb while the border correctly steps through all four.
+			_accent = tier_color
 
 func _decay_tier_for(v: float, perfect_end: float, good_end: float, okay_end: float) -> int:
 	if v <= perfect_end:
@@ -357,6 +427,76 @@ func _decay_tier_for(v: float, perfect_end: float, good_end: float, okay_end: fl
 	if v <= okay_end:
 		return 2
 	return 3
+
+# --- Zero-proximity urgency glow --------------------------------------------
+# See TimerSlot's own constants block for the full design rationale - this is
+# the same machinery, called from this tile's own play_countdown()/
+# play_overrun()/play_decay_climb() loops rather than from play_blur()
+# (GOLDEN gets no effect - see the brief), keeping this tile's isolation from
+# the real gameplay event bus intact: everything here reads only `value`,
+# `timer_type` and `_selected`, all local to the tile itself.
+
+func _update_urgency(delta: float, distance_like: float, past_zero: bool) -> void:
+	_urgency = TimerSlot.urgency_of(distance_like)
+	if past_zero != _urgency_past_zero:
+		_urgency_past_zero = past_zero
+		_urgency_phase = 0.0
+	var hz: float = lerpf(URGENCY_FLICKER_HZ_MIN, URGENCY_FLICKER_HZ_MAX, _urgency) if past_zero \
+		else lerpf(URGENCY_BREATH_HZ_MIN, URGENCY_BREATH_HZ_MAX, _urgency)
+	_urgency_phase += delta * hz
+	_urgency_envelope = _pulse_envelope(_urgency_phase, past_zero)
+	_urgency_pulse = _urgency * lerpf(URGENCY_PULSE_FLOOR, 1.0, _urgency_envelope)
+
+func _pulse_envelope(phase: float, flicker: bool) -> float:
+	if flicker:
+		return pow(absf(sin(phase * TAU * 0.5)), 0.35)
+	return 0.5 + 0.5 * sin(phase * TAU)
+
+# One shared toggle with the real board - TimerSlot.BLACKOUT_URGENCY_SUPPRESSED -
+# so the Help screen's Blackout demo and the actual game always agree on which
+# version is currently being tested, rather than needing a second flag flipped
+# in lockstep.
+func _urgency_visual_scale(in_blackout_window: bool) -> float:
+	if in_blackout_window:
+		return 0.0 if TimerSlot.BLACKOUT_URGENCY_SUPPRESSED else TimerSlot.BLACKOUT_URGENCY_SCALE
+	return 1.0
+
+# Same centred-swing modulation as TimerSlot._decay_urgency_glow_scale() -
+# see that function's comment for why _urgency_envelope is recentred here
+# rather than used directly.
+func _decay_urgency_glow_scale() -> float:
+	var swing := DECAY_URGENCY_PULSE_DEPTH * _urgency * (_urgency_envelope - 0.5) * 2.0
+	return 1.0 + swing * Settings.effect_scale()
+
+# Applies this frame's computed glow to the panel, composing with whichever
+# baseline currently applies (the plain idle look, or set_selected()'s ring)
+# rather than assuming one or the other - a tile is USUALLY selected for the
+# whole time it's also playing a demo (tapping one is what starts both), so
+# skipping the glow entirely while selected would mean it's almost never
+# actually visible during the one moment a player is watching it play out.
+# Border width is the one property left alone while selected - the ring's
+# fixed width is a deliberate, separate "this tile is currently tapped"
+# signal, and pulsing it too would make the ring jitter instead of hold.
+func _apply_urgency_to_panel(in_blackout_window: bool = false) -> void:
+	if _panel_style == null:
+		return
+	var base_size: float = SELECTED_SHADOW_SIZE if _selected else BASE_SHADOW_SIZE
+	var base_alpha: float = SELECTED_SHADOW_ALPHA if _selected else BASE_SHADOW_ALPHA
+
+	if timer_type == TimerData.TimerType.DECAY:
+		var scale := _decay_urgency_glow_scale()
+		_panel_style.shadow_size = int(round(base_size * scale))
+		_panel_style.shadow_color = Color(_accent.r, _accent.g, _accent.b,
+			clampf(base_alpha * scale, 0.0, 1.0))
+		return
+
+	var bonus := _urgency_pulse * Settings.effect_scale() * _urgency_visual_scale(in_blackout_window)
+	_panel_style.shadow_size = int(round(base_size + URGENCY_GLOW_SIZE_BONUS * bonus))
+	_panel_style.shadow_color = Color(_accent.r, _accent.g, _accent.b,
+		clampf(base_alpha + URGENCY_ALPHA_BONUS * bonus, 0.0, 1.0))
+	if not _selected:
+		_panel_style.set_border_width_all(
+			int(round(BASE_BORDER_WIDTH + URGENCY_BORDER_WIDTH_BONUS * bonus)))
 
 # Golden's digits never count - they just churn - so this is time-based, not
 # value-based, matching TimerSlot._process_golden exactly.
@@ -576,12 +716,14 @@ func set_selected(on: bool) -> void:
 	_selected = on
 	if _panel_style == null:
 		return
-	_panel_style.border_width_left = 5 if on else 3
-	_panel_style.border_width_right = 5 if on else 3
-	_panel_style.border_width_top = 5 if on else 3
-	_panel_style.border_width_bottom = 5 if on else 3
-	_panel_style.shadow_size = 20 if on else 10
-	_panel_style.shadow_color = Color(_accent.r, _accent.g, _accent.b, 0.55 if on else 0.30)
+	var width := int(SELECTED_BORDER_WIDTH if on else BASE_BORDER_WIDTH)
+	_panel_style.border_width_left = width
+	_panel_style.border_width_right = width
+	_panel_style.border_width_top = width
+	_panel_style.border_width_bottom = width
+	_panel_style.shadow_size = int(SELECTED_SHADOW_SIZE if on else BASE_SHADOW_SIZE)
+	_panel_style.shadow_color = Color(_accent.r, _accent.g, _accent.b,
+		SELECTED_SHADOW_ALPHA if on else BASE_SHADOW_ALPHA)
 	if not on:
 		_set_border(_accent)
 
