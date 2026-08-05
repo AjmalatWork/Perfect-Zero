@@ -363,6 +363,15 @@ func _undim_page1() -> void:
 # out from under its own stop - the tap then falls through to "start a demo"
 # and RESTARTS the timer the player was trying to stop, on the exact frame
 # their timing mattered.
+# Forwarded to every tile - see HelpDemoTile.suppress_taps. block_taps above
+# only stops a swipe from STARTING a demo; this is what stops one from resolving
+# a demo already running, which the tile owns itself and this component never
+# sees.
+func set_suppress_taps(on: bool) -> void:
+	for t in _type_tiles + _bystander_tiles:
+		if is_instance_valid(t):
+			t.suppress_taps = on
+
 func tap_lands_on_active_run(global_pos: Vector2) -> bool:
 	for t in _type_tiles + _bystander_tiles:
 		if is_instance_valid(t) and t.is_practice_run_active() \

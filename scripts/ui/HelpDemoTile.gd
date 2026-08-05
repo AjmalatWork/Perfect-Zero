@@ -95,6 +95,27 @@ var value: float = 0.0
 # call site would just be overwritten there.
 var interactive: bool = true
 
+# Opt-in: this tile participates in REAL powerup effects, the way a board
+# TimerSlot does - Overclock scales its countdown rate, and Shield gets offered
+# its FAILs to downgrade. Off by default, so the Timer Types legend keeps the
+# full cosmetic isolation this class was built for (see the header).
+#
+# Only the powerups practice grid sets it, and only ever while
+# Powerups.set_practice_mode() is on - which cannot engage during a real run,
+# so a tile reading these can never be reading a live run's charges. Reaching
+# for Powerups rather than mirroring its numbers locally is the point: the page
+# exists to show what the real powerup does, and a local copy is exactly the
+# kind of thing that drifts from the board it is teaching.
+var live_powerups: bool = false
+
+# Set by the host while a page-swipe gesture is in progress. A swipe that
+# happens to pass over a running tile still delivers a release to it, and
+# without this that release resolves the run - so dragging between pages would
+# stop whatever timer the finger crossed, and grade it on wherever the drag
+# started. The host's own tap handlers already ignore swipes; this is the same
+# guard for the tile's self-owned stop, which those handlers never see.
+var suppress_taps: bool = false
+
 var _accent: Color
 var _base_bg: Color
 var _panel_style: StyleBoxFlat
@@ -138,6 +159,8 @@ var _urgency_past_zero: bool = false
 var _awaiting_tap: bool = false
 var _tap_pressed: bool = false
 var _tap_consumed: bool = false
+# Set by force_resolve_practice() - a resolution nobody tapped for (Nuke).
+var _forced_grade: String = ""
 # `value` sampled at the instant the finger went DOWN, which is when the player
 # actually committed to their timing.
 #
@@ -275,6 +298,12 @@ func _gui_input(event: InputEvent) -> void:
 		if _awaiting_tap:
 			_tap_pressed = true
 			_tap_value = value
+		return
+	# The gesture turned out to be a page swipe, not a tap - see suppress_taps.
+	# Clearing _tap_pressed as well means the drag cannot leave a stale sample
+	# behind for some later release to resolve against.
+	if suppress_taps:
+		_tap_pressed = false
 		return
 	# _tap_pressed gates this so a run that STARTS with a finger already down
 	# can't be resolved by that finger coming up: without it the release would
@@ -686,7 +715,23 @@ func _clear_tap_capture() -> void:
 	_tap_pressed = false
 	_tap_consumed = false
 	_tap_value = 0.0
+	_forced_grade = ""
 	_set_tap_hint(false)
+
+# Resolves the in-flight run at `grade` with no tap - the practice equivalent of
+# TimerSlot.force_resolve(), which is how Nuke cashes in every live timer on the
+# real board. Recorded for the run loop to notice on its next frame rather than
+# resolved inline, so a forced resolution leaves through the same single exit a
+# tapped one does instead of opening a second path out.
+func force_resolve_practice(grade: String) -> void:
+	if _awaiting_tap:
+		_forced_grade = grade
+
+# Countdown rate contribution from live powerups, or 1.0 when this tile is not
+# wired to them. Overclock is the only thing that moves it - the very same
+# Powerups.timer_speed_scale() every real TimerSlot reads every frame.
+func _powerup_rate() -> float:
+	return Powerups.timer_speed_scale() if live_powerups else 1.0
 
 # Pulse depth (not presence) rides Settings.effect_scale(), the same treatment
 # every other softenable local effect on this tile gets. Reduce-screen-effects
@@ -721,6 +766,13 @@ func _finish_tappable_run(grade: String, frozen_digit: String, bonus_text: Strin
 	# tapped/expired distinction still exists.
 	last_run_was_tapped = _tap_consumed
 	_clear_tap_capture()
+	# Shield's downgrade, on a tile wired to live powerups. Applied here - ahead
+	# of the flash, the grade sign and the value returned to the host - for the
+	# same reason TimerSlot._resolve_stop() applies it ahead of its own: the
+	# player has to see the MISS they actually got, not a FAIL that quietly
+	# scores as something else. Returns `grade` untouched when no window is open.
+	if live_powerups:
+		grade = Powerups.filter_grade(grade, global_position + size * 0.5)
 	play_grade(grade, frozen_digit, 0.0, bonus_text)
 	return grade
 
@@ -741,6 +793,9 @@ func run_tappable_countdown(start: float, blackout_at: float = -1.0,
 		await get_tree().process_frame
 		if token != _play_token or not is_instance_valid(self):
 			return ""
+		if _forced_grade != "":
+			grade = _forced_grade
+			break
 		if _tap_consumed:
 			grade = TimerSlot.grade_for_distance(TimerSlot.stop_distance_for(_tap_value))
 			break
@@ -750,7 +805,8 @@ func run_tappable_countdown(start: float, blackout_at: float = -1.0,
 		if _paused:
 			continue
 		var dt := get_process_delta_time()
-		value = maxf(value - dt * _rate_multiplier, TimerSlot.EXPIRE_THRESHOLD)
+		value = maxf(value - dt * _rate_multiplier * _powerup_rate(),
+			TimerSlot.EXPIRE_THRESHOLD)
 		_render_countdown(blackout_at)
 		_update_urgency(dt, value, value <= 0.0, TimerSlot.URGENCY_RANGE)
 		_apply_urgency_to_panel(blackout_at >= 0.0 and value <= blackout_at)
@@ -783,7 +839,7 @@ func run_tappable_golden(bonus_text: String = "") -> String:
 	var interval := 1.0 / GOLDEN_BLUR_SPEED
 	var accumulator := 0.0
 	var digit := 0
-	while not _tap_consumed:
+	while not _tap_consumed and _forced_grade == "":
 		await get_tree().process_frame
 		if token != _play_token or not is_instance_valid(self):
 			return ""
@@ -796,8 +852,11 @@ func run_tappable_golden(bonus_text: String = "") -> String:
 			_digit.text = "0.0%d" % digit
 	# Guaranteed PERFECT at any moment, landing on a clean 0.00 rather than
 	# whichever blur digit happened to be up - TimerSlot._resolve_stop() does
-	# the same, so the payoff digit is identical every time.
-	return _finish_tappable_run("PERFECT", "0.00", bonus_text)
+	# the same, so the payoff digit is identical every time. A Nuke sweeping the
+	# board cashes it in at PERFECT too, so the forced grade and the tapped one
+	# agree here by construction.
+	var golden_grade: String = _forced_grade if _forced_grade != "" else "PERFECT"
+	return _finish_tappable_run(golden_grade, "0.00", bonus_text)
 
 # Decay. Climbs from 0.00 and grades on which ceiling tier it was stopped in,
 # reaching `miss_end` as a MISS. Decay can never FAIL or cost a life - a
@@ -816,6 +875,9 @@ func run_tappable_decay(perfect_end: float, good_end: float, okay_end: float,
 		await get_tree().process_frame
 		if token != _play_token or not is_instance_valid(self):
 			return ""
+		if _forced_grade != "":
+			grade = _forced_grade
+			break
 		if _tap_consumed:
 			grade = TimerSlot.DECAY_TIER_GRADES[
 				_decay_tier_for(_tap_value, perfect_end, good_end, okay_end)]
@@ -825,7 +887,7 @@ func run_tappable_decay(perfect_end: float, good_end: float, okay_end: float,
 			break
 		if not _paused:
 			var dt := get_process_delta_time()
-			value = minf(value + dt * _rate_multiplier, miss_end)
+			value = minf(value + dt * _rate_multiplier * _powerup_rate(), miss_end)
 			tick_accum += dt
 			if tick_accum >= 1.0:
 				tick_accum = 0.0

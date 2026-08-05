@@ -250,6 +250,25 @@ const PRACTICE_DECAY_MISS_END := 4.0
 @export var practice_replay_delay_after_stop: float = 2.0
 @export var practice_replay_delay_after_expire: float = 2.0
 
+# --- Page 2: the powerup practice board ---------------------------------------
+# A permanently-running 2x2 of Normal timers for the powerups to actually act
+# on. Unlike page 1 - where tiles stay idle until tapped, so only one animation
+# runs at a time - this board has to already be live, because a powerup with
+# nothing to affect demonstrates nothing. All four are tappable, and the whole
+# board restarts together once every one of them has resolved, so a powerup is
+# always fired into a full board rather than whatever remnant survived the last
+# sweep.
+const PRACTICE_BOARD_STARTS := [4.0, 5.0, 6.0, 7.0]
+const PRACTICE_BOARD_COLUMNS := 2
+
+# The in-flow explanation panel, sitting between the board and the buttons
+# exactly as requested. Same styling idiom as page 1's anchored caption
+# (_caption_box) so the two read as one component; in flow rather than anchored
+# because there is a fixed slot for it here, and nothing to anchor it to.
+const POWERUP_CAPTION_PAD := 12.0
+const POWERUP_CAPTION_FONT := 20
+const POWERUP_CAPTION_LINES := 3
+
 # --- Page 2 demo timing --------------------------------------------------------
 const PREVIEW_STARTS := [1.9, 2.5, 3.1]
 const NUKE_RUN_SEC := 0.6         # how long the preview timers run before Nuke hits
@@ -349,7 +368,12 @@ var _caption_tile: HelpDemoTile
 var _caption_token: int = 0
 var _types_legend: TimerTypesLegend            # page 1, shared with HelpBubble
 var _powerup_tiles: Array[HelpDemoTile] = []   # page 2, react to the three powerups
-var _powerup_buttons: Array[Button] = []
+# PowerupBar.PowerupButton (a Control), not this screen's old Button stand-ins.
+var _powerup_buttons: Array = []
+var _powerup_caption: Panel
+var _powerup_caption_label: Label
+var _practice_board_running: bool = false
+var _practice_board_results: Dictionary = {}
 var _grade_buttons: Array[Button] = []
 var _score_tile: HelpDemoTile
 var _score_readout: Label
@@ -358,7 +382,35 @@ func _ready() -> void:
 	_build()
 	Layout.changed.connect(_apply_canvas)
 	GameManager.state_changed.connect(_on_game_state_changed)
+	# The practice buttons fire real activations themselves, so the page learns
+	# what happened from Powerups rather than from its own button handlers -
+	# which also means the A/S/D keyboard shortcuts reach the practice board on
+	# desktop for free, exactly as they reach the real one.
+	Powerups.state_changed.connect(_on_powerups_state_changed)
+	Powerups.clear_all_fired.connect(_on_practice_nuke_fired)
+	Powerups.shield_armed.connect(_on_powerup_activated.bind(PowerupSystem.Kind.SHIELD))
+	Powerups.clear_all_fired.connect(_on_powerup_activated.bind(PowerupSystem.Kind.CLEAR_ALL))
+	Powerups.overclock_started.connect(_on_powerup_activated.bind(PowerupSystem.Kind.OVERCLOCK))
+	Powerups.shield_absorbed.connect(_on_practice_shield_absorbed)
 	_apply_canvas()
+
+func _on_powerups_state_changed() -> void:
+	for b in _powerup_buttons:
+		if is_instance_valid(b):
+			b.refresh()
+
+func _on_practice_shield_absorbed(_origin: Vector2) -> void:
+	for b in _powerup_buttons:
+		if is_instance_valid(b) and b.kind == PowerupSystem.Kind.SHIELD:
+			b.play_absorb_flash()
+
+# Points the activation effects at THIS page's buttons. See PowerupBar._ready()
+# for the other half of this - the origins are a single global slot per kind, so
+# whichever bar is actually on screen has to claim them.
+func _register_practice_button_origins() -> void:
+	for b in _powerup_buttons:
+		if is_instance_valid(b):
+			Powerups.register_button_origin(b.kind, b.global_position + b.size * 0.5)
 
 # Screens in this game stay in the tree with only `visible` toggled (see
 # MainScreenRouter), so leaving HELP was never actually stopping anything - a
@@ -378,29 +430,38 @@ func _on_game_state_changed(new_state: int) -> void:
 		# transition here would be seen mid-appearance rather than as a real page
 		# change.
 		_show_page(0, false)
+		# Real activations with no run-state cost - see
+		# Powerups.set_practice_mode(). Refused outright if a run were somehow
+		# armed, so this can never reach into live charges.
+		Powerups.set_practice_mode(true)
 		return
 	_cancel_all_demos()
+	Powerups.set_practice_mode(false)
 
 # Stops every in-flight type/powerup/scoring demo and its caption, resetting
 # every tile touched back to idle - shared between leaving the screen entirely
 # (state_changed, below) and tapping anywhere on it mid-demo (_end_drag()),
 # since both need exactly the same reset.
-func _cancel_all_demos() -> void:
-	_powerup_demo_token += 1
+#
+# `stop_board` is false for the tap-anywhere path. The powerups board is
+# permanently running by design, so a tap on empty space there must not tear it
+# down the way it tears down a page-1 demo - that would make the page stop
+# working the first time the player's finger missed a tile.
+func _cancel_all_demos(stop_board: bool = true) -> void:
 	_score_token += 1
 	_force_unduck_music()
 	AudioManager.stop_all_sfx()
 	if _types_legend != null:
 		_types_legend.cancel_demos()
-	for p in _powerup_tiles:
-		if is_instance_valid(p):
-			p.idle()
-			p.set_present(false)
+	if stop_board:
+		_stop_practice_board()
+		for p in _powerup_tiles:
+			if is_instance_valid(p):
+				p.set_present(false)
 	if _score_tile != null and is_instance_valid(_score_tile):
 		_score_tile.idle()
 		_score_tile.set_present(false)
 	_hide_caption()
-	_undim_powerup_buttons()
 
 # A plain resize is a re-measure; an orientation change rebuilds, because the
 # portrait scale feeds every font size and a Label's is fixed once created.
@@ -926,9 +987,13 @@ func _on_legend_type_tapped(tile: HelpDemoTile, text: String, accent: Color) -> 
 
 # --- Page 2: powerups ---------------------------------------------------------
 
+# Board on top, explanation in the middle, buttons at the bottom - the order
+# asked for, and the one that puts the buttons in easy thumb reach with the
+# thing they act on above them, matching how the real board is laid out in
+# portrait.
 func _build_page_powerups() -> Control:
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", _fs(12))
+	col.add_theme_constant_override("separation", _fs(10))
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 
 	var label := Label.new()
@@ -938,9 +1003,31 @@ func _build_page_powerups() -> Control:
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(label)
 
+	var grid := GridContainer.new()
+	grid.columns = PRACTICE_BOARD_COLUMNS
+	grid.add_theme_constant_override("h_separation", _fs(12))
+	grid.add_theme_constant_override("v_separation", _fs(12))
+	for i in range(PRACTICE_BOARD_STARTS.size()):
+		var tile := _make_tile(TimerData.TimerType.NORMAL, "")
+		# Real taps, real grades, and real powerup effects - see
+		# HelpDemoTile.live_powerups. Safe because the page only ever runs while
+		# Powerups.set_practice_mode() is on, which cannot engage during a run.
+		tile.live_powerups = true
+		_powerup_tiles.append(tile)
+		grid.add_child(tile)
+	var grid_wrap := CenterContainer.new()
+	grid_wrap.add_child(grid)
+	col.add_child(grid_wrap)
+
+	col.add_child(_build_powerup_caption())
+
+	# Real PowerupBar buttons at the real board's own size, rather than this
+	# screen's old 150x92 stand-ins - the page is teaching a control the player
+	# is about to use, so it should be the same object at the same size, with the
+	# same icon, cooldown ring and depletion bar.
 	var button_row := HBoxContainer.new()
 	button_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	button_row.add_theme_constant_override("separation", _fs(12))
+	button_row.add_theme_constant_override("separation", _fs(16))
 	for kind in PowerupSystem.ORDER:
 		var b := _make_powerup_button(kind)
 		_powerup_buttons.append(b)
@@ -948,223 +1035,170 @@ func _build_page_powerups() -> Control:
 	var button_wrap := CenterContainer.new()
 	button_wrap.add_child(button_row)
 	col.add_child(button_wrap)
-
-	# A three-timer stand-in for the board. Shield is the reason this row exists
-	# rather than a single tile: it is the one powerup that saves exactly one
-	# timer, and seeing the other two carry on untouched is what distinguishes it
-	# from Nuke and Overclock without needing a sentence to say so.
-	var demo_row := HBoxContainer.new()
-	demo_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	demo_row.add_theme_constant_override("separation", _fs(12))
-	for i in range(3):
-		var tile := _make_tile(TimerData.TimerType.NORMAL, "")
-		tile.interactive = false
-		_powerup_tiles.append(tile)
-		demo_row.add_child(tile)
-		# Nothing to demonstrate until a powerup is actually tapped.
-		tile.set_present(false)
-	var demo_wrap := CenterContainer.new()
-	demo_wrap.add_child(demo_row)
-	col.add_child(demo_wrap)
-
-	col.add_child(_make_desc_label(1, "Tap a powerup to see what it does."))
 	return col
 
-func _make_powerup_button(kind: int) -> Button:
-	var accent: Color = PowerupSystem.color_of(kind)
-	var button := Button.new()
-	button.custom_minimum_size = POWERUP_BUTTON_SIZE * _s()
-	button.add_theme_stylebox_override("normal", _box(accent, 0.85))
-	button.add_theme_stylebox_override("hover", _box(accent, 0.7))
-	button.add_theme_stylebox_override("pressed", _box(accent, 0.6))
-	PressFeedback.apply(button)
-	button.pressed.connect(_on_powerup_pressed.bind(kind))
+func _build_powerup_caption() -> Control:
+	_powerup_caption = Panel.new()
+	_powerup_caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_powerup_caption.add_theme_stylebox_override("panel", _caption_box(NEON))
+	# A fixed height for a fixed slot: the panel sits between two things that
+	# must not move, so it cannot be allowed to grow with whichever description
+	# happens to be showing. Sized off the real font metrics rather than guessed,
+	# the same measure-don't-assume the anchored caption arrived at the hard way
+	# (see _measured_caption_height).
+	var line_h: float = float(_fs(POWERUP_CAPTION_FONT)) * 1.35
+	_powerup_caption.custom_minimum_size = Vector2(0,
+		line_h * POWERUP_CAPTION_LINES + POWERUP_CAPTION_PAD * _s() * 2.0)
+	_powerup_caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	# The same drawn glyph the in-game buttons use, so the legend and the board
-	# can't drift apart. mouse_filter IGNORE on both children so neither steals
-	# the click meant for the Button underneath.
-	var icon := PowerupIcon.new(kind)
-	var icon_size: float = POWERUP_BUTTON_SIZE.y * _s() * 0.42
-	icon.size = Vector2(icon_size, icon_size)
-	icon.position = Vector2((POWERUP_BUTTON_SIZE.x * _s() - icon_size) * 0.5, POWERUP_BUTTON_SIZE.y * _s() * 0.12)
-	button.add_child(icon)
+	_powerup_caption_label = Label.new()
+	_powerup_caption_label.add_theme_font_size_override("font_size", _fs(POWERUP_CAPTION_FONT))
+	_powerup_caption_label.add_theme_color_override("font_color", TEXT_FILL)
+	_powerup_caption_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_powerup_caption_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_powerup_caption_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_powerup_caption_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_powerup_caption_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var pad: float = POWERUP_CAPTION_PAD * _s()
+	_powerup_caption_label.offset_left = pad
+	_powerup_caption_label.offset_top = pad
+	_powerup_caption_label.offset_right = -pad
+	_powerup_caption_label.offset_bottom = -pad
+	_powerup_caption_label.text = "Tap a powerup to fire it at the board above."
+	_powerup_caption.add_child(_powerup_caption_label)
+	return _powerup_caption
 
-	var name_label := Label.new()
-	name_label.text = PowerupSystem.name_of(kind)
-	name_label.add_theme_font_size_override("font_size", _fs(TILE_NAME_SIZE))
-	name_label.add_theme_color_override("font_color", accent)
-	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	name_label.position = Vector2(0, POWERUP_BUTTON_SIZE.y * _s() * 0.66)
-	name_label.size = Vector2(POWERUP_BUTTON_SIZE.x * _s(), POWERUP_BUTTON_SIZE.y * _s() * 0.28)
-	button.add_child(name_label)
-
+# A genuine PowerupBar.PowerupButton, not a lookalike: same drawn panel, icon,
+# name, cooldown ring and depletion bar, at the real board's own size for this
+# orientation. It also brings its own activation handling - its _gui_input calls
+# Powerups.activate(kind) directly - so there is no pressed handler to wire here.
+func _make_powerup_button(kind: int) -> Control:
+	var button := PowerupBar.PowerupButton.new()
+	# size before configure(): the button scales every internal measurement off
+	# its own height (see PowerupButton.BASE_HEIGHT), so it has to know it first.
+	button.size = _powerup_button_size()
+	button.custom_minimum_size = button.size
+	button.configure(kind)
 	return button
 
-func _on_powerup_pressed(kind: int) -> void:
-	if _swipe_active:
+# The real board's own button footprint, so the control the player practises on
+# is the size of the one they will actually reach for.
+func _powerup_button_size() -> Vector2:
+	return PowerupBar.PORTRAIT_BUTTON_SIZE if Layout.is_portrait() \
+		else PowerupBar.LANDSCAPE_BUTTON_SIZE
+
+# The buttons activate themselves, so this only has to keep the page's own
+# furniture in step: name the powerup in the caption, and re-point the effect
+# origins at THESE buttons rather than wherever a real board last registered.
+func _on_powerup_activated(kind: int) -> void:
+	_register_practice_button_origins()
+	if _powerup_caption_label != null and is_instance_valid(_powerup_caption_label):
+		_powerup_caption_label.text = "%s - %s  (%s)" % [PowerupSystem.name_of(kind),
+			Powerups.describe(kind), Powerups.cooldown_text(kind)]
+	if _powerup_caption != null and is_instance_valid(_powerup_caption):
+		_powerup_caption.add_theme_stylebox_override("panel",
+			_caption_box(PowerupSystem.color_of(kind)))
+
+# Nuke has no per-timer effect of its own to read off Powerups state - it fires
+# once and expects somebody to sweep the board - so this page has to do for its
+# practice board what EndlessRunner._run_nuke_cascade does for the real one.
+# Overclock and Shield need no equivalent: the tiles read timer_speed_scale()
+# and route their FAILs through filter_grade() themselves every frame (see
+# HelpDemoTile.live_powerups).
+func _on_practice_nuke_fired() -> void:
+	if _page_index != 1:
 		return
-	_powerup_demo_token += 1
-	var token := _powerup_demo_token
-	var accent: Color = PowerupSystem.color_of(kind)
-	_set_desc(1, "%s - %s  (%s)" % [PowerupSystem.name_of(kind),
-		Powerups.describe(kind), Powerups.cooldown_text(kind)], accent)
-	_dim_powerup_buttons_except(kind)
-	# The same activation cue the real board plays the instant a powerup button
-	# is pressed - AudioManager only, no Powerups.activate() call, so nothing
-	# about cooldowns/charges is touched.
-	AudioManager.play_powerup_activate(kind)
-
-	match kind:
-		PowerupSystem.Kind.CLEAR_ALL:
-			_play_nuke_demo(token)
-		PowerupSystem.Kind.OVERCLOCK:
-			_play_overclock_demo(token)
-		PowerupSystem.Kind.SHIELD:
-			_play_shield_demo(token)
-
-func _dim_powerup_buttons_except(kind: int) -> void:
-	for i in range(_powerup_buttons.size()):
-		var on: bool = PowerupSystem.ORDER[i] != kind
-		var button := _powerup_buttons[i]
-		var tween := create_tween()
-		tween.tween_property(button, "modulate:a", 0.25 if on else 1.0, 0.18)
-		button.disabled = on
-
-func _undim_powerup_buttons() -> void:
-	for button in _powerup_buttons:
-		var tween := create_tween()
-		tween.tween_property(button, "modulate:a", 1.0, 0.18)
-		button.disabled = false
-
-# Nuke's real effect is instant and forces whatever value each timer happens to
-# be showing at that moment - so the three preview tiles are left running for
-# NUKE_RUN_SEC first, their live values captured, then their own countdown
-# loops are cancelled (cancel_playback()) before play_grade freezes them there.
-# Without the cancel, each tile's still-running play_countdown would keep
-# overwriting the frozen digit out from under the grade sign a frame later.
-func _play_nuke_demo(token: int) -> void:
-	_duck_music(true)
-	for i in range(_powerup_tiles.size()):
-		_powerup_tiles[i].set_present(true)
-		_powerup_tiles[i].play_countdown(PREVIEW_STARTS[i], 0.0)
-	await get_tree().create_timer(NUKE_RUN_SEC, true, false, true).timeout
-	if not _still_powerup_demo(token):
-		_duck_music(false)
+	var live: Array[HelpDemoTile] = []
+	for t in _powerup_tiles:
+		if is_instance_valid(t) and t.is_practice_run_active():
+			live.append(t)
+	if live.is_empty():
 		return
-	# Every digit is frozen up front, then the resolutions are staggered - the
-	# same two beats the real Nuke has, where Juice.freeze_gameplay() stops the
-	# board and _run_nuke_cascade walks it. Capturing before the stagger is what
-	# makes the freeze real: resolving tile 3 two gaps later must show the value
-	# it held when the powerup landed, not one it kept counting down to since.
-	var total: int = _powerup_tiles.size()
-	var frozen: Array[String] = []
-	for tile in _powerup_tiles:
-		# Appended in both branches so frozen[i] stays aligned with tile i - the
-		# cascade below indexes them together.
-		if is_instance_valid(tile):
-			frozen.append("%.2f" % tile.value)
-			tile.cancel_playback()
-		else:
-			frozen.append("0.00")
-	# Same fixed total length the board uses, divided the same way, so the legend
-	# and the real cascade run at the same rhythm.
+	# Ordered by distance from the button that fired it, so the chain reads as
+	# spreading outward from where the player pressed - same ordering, and the
+	# same fixed total length, as the real cascade.
+	var origin: Vector2 = Powerups.button_origin(PowerupSystem.Kind.CLEAR_ALL)
+	live.sort_custom(func(a, b):
+		return a.get_global_rect().get_center().distance_to(origin) \
+			< b.get_global_rect().get_center().distance_to(origin))
+	_run_practice_nuke_cascade(live)
+
+func _run_practice_nuke_cascade(live: Array[HelpDemoTile]) -> void:
+	var total: int = live.size()
 	var gap: float = EndlessRunner.NUKE_CASCADE_SEC / float(maxi(total, 1))
+	var token := _powerup_demo_token
 	for i in range(total):
-		if not _still_powerup_demo(token):
-			_duck_music(false)
+		if token != _powerup_demo_token:
 			return
-		var t: HelpDemoTile = _powerup_tiles[i]
+		var t: HelpDemoTile = live[i]
 		if is_instance_valid(t):
-			t.play_grade("PERFECT", frozen[i], RESULT_HOLD_SEC)
+			# Every live timer cashes in at a flat PERFECT, exactly as
+			# TimerSlot.force_resolve("PERFECT") does under the real cascade.
+			t.force_resolve_practice("PERFECT")
 			AudioManager.play_nuke_note(i, total)
 		if i < total - 1:
 			await get_tree().create_timer(gap, true, false, true).timeout
-	await get_tree().create_timer(RESULT_HOLD_SEC, true, false, true).timeout
-	_duck_music(false)
-	_end_powerup_demo(token)
 
-# All three run at a visible baseline speed first (OVERCLOCK_LEAD_SEC) so the
-# boost reads as a change, not just "these were always fast" - then every tile
-# gets react_overclock, which (unlike Red's permanent bump) reverts on its own
-# once EFFECT_SEC elapses, matching the real powerup's timed duration.
-func _play_overclock_demo(token: int) -> void:
-	_duck_music(true)
-	for i in range(_powerup_tiles.size()):
-		_powerup_tiles[i].set_present(true)
-		_run_preview_countdown(_powerup_tiles[i], OVERCLOCK_STARTS[i], token)
-	await get_tree().create_timer(OVERCLOCK_LEAD_SEC, true, false, true).timeout
-	if not _still_powerup_demo(token):
-		_duck_music(false)
-		return
-	for tile in _powerup_tiles:
-		if is_instance_valid(tile):
-			tile.react_overclock(EFFECT_SEC)
-	await get_tree().create_timer(EFFECT_SEC + 2.0, true, false, true).timeout
-	_duck_music(false)
-	_end_powerup_demo(token)
-
-func _run_preview_countdown(tile: HelpDemoTile, start: float, token: int) -> void:
-	await tile.play_countdown(start, _random_perfect_stop())
-	if not _still_powerup_demo(token) or not is_instance_valid(tile):
-		return
-	tile.play_grade("PERFECT", "%.2f" % tile.value, RESULT_HOLD_SEC)
-
-# Shield acts on exactly one timer, and the demonstration is the asymmetry: the
-# other two preview tiles are dimmed out entirely (they never even start
-# running) while the first genuinely counts all the way out - a real FAIL,
-# caught a beat later and settled as a MISS. Only one timer is ever at risk,
-# which is the whole point Nuke and Overclock's demos (all three participate)
-# exist to contrast against.
+# The practice board: all four tiles live at once, restarting as a group.
 #
-# On the real board this conversion is invisible - Powerups.filter_grade()
-# runs before _play_stop_flash() ever fires, so a saved player only ever sees
-# the MISS. Showing the FAIL first anyway is deliberately more than the real
-# board renders: the whole point here is teaching what Shield prevented, not
-# reproducing the live feed frame-for-frame.
-func _play_shield_demo(token: int) -> void:
-	if _powerup_tiles.is_empty():
+# Deliberately unlike page 1, where tiles stay idle until tapped so only one
+# animation ever runs (see HelpDemoTile's header for why that rule exists). A
+# powerup fired at an idle board demonstrates nothing, so this one has to
+# already be running - and it restarts only once ALL four have resolved, so a
+# powerup always lands on a full board rather than on whatever survived the
+# previous sweep.
+func _start_practice_board() -> void:
+	if _powerup_tiles.is_empty() or _practice_board_running:
 		return
-	_duck_music(true)
-	# The other two never appear at all for this one - Shield only ever puts
-	# one timer at risk, unlike Nuke/Overclock which reveal all three.
-	var tile: HelpDemoTile = _powerup_tiles[0]
-	tile.set_present(true)
-	await tile.play_countdown(REACT_TILE_START, 0.0)
-	if not _still_powerup_demo(token) or not is_instance_valid(tile):
-		_duck_music(false)
-		return
-	# Nobody clicks it, so it overruns rather than stopping dead at zero. This is
-	# the part the demo used to get wrong: it froze at "0.00" and called that a
-	# FAIL, but 0.00 is the exact centre of the PERFECT window. A FAIL is a stop
-	# more than TimerSlot.MISS_MAX (1.00) from zero, which is only reachable by
-	# running past it.
-	await tile.play_overrun(SHIELD_FAIL_DISTANCE)
-	if not _still_powerup_demo(token) or not is_instance_valid(tile):
-		_duck_music(false)
-		return
-	var overrun := "%.2f" % SHIELD_FAIL_DISTANCE
-	tile.play_grade("FAIL", overrun, SHIELD_FAIL_SEC + SHIELD_SAVED_SEC)
-	await get_tree().create_timer(SHIELD_FAIL_SEC, true, false, true).timeout
-	if not _still_powerup_demo(token) or not is_instance_valid(tile):
-		_duck_music(false)
-		return
-	# The distance is unchanged by the save - Powerups.filter_grade() rewrites the
-	# grade and nothing else, so the digit stays exactly where it landed.
-	tile.play_grade("MISS", overrun, SHIELD_SAVED_SEC)
-	await get_tree().create_timer(SHIELD_SAVED_SEC, true, false, true).timeout
-	_duck_music(false)
-	_end_powerup_demo(token)
+	_practice_board_running = true
+	_powerup_demo_token += 1
+	_run_practice_board(_powerup_demo_token)
 
-func _end_powerup_demo(token: int) -> void:
-	if not _still_powerup_demo(token):
-		return
-	_undim_powerup_buttons()
-	for tile in _powerup_tiles:
-		if is_instance_valid(tile):
-			tile.set_dimmed(false)
-			tile.idle()
-			tile.set_present(false)
+func _stop_practice_board() -> void:
+	_practice_board_running = false
+	_powerup_demo_token += 1
+	_practice_board_results.clear()
+	for t in _powerup_tiles:
+		if is_instance_valid(t):
+			t.idle()
+
+func _run_practice_board(token: int) -> void:
+	_duck_music(true)
+	while _still_powerup_demo(token):
+		_practice_board_results.clear()
+		for i in range(_powerup_tiles.size()):
+			var tile: HelpDemoTile = _powerup_tiles[i]
+			if is_instance_valid(tile):
+				tile.set_present(true)
+				_run_practice_board_tile(tile, PRACTICE_BOARD_STARTS[i], token)
+		# The group beat: nothing restarts until every tile has finished, so a
+		# player still working the last timer never has it yanked away.
+		while _still_powerup_demo(token) 				and _practice_board_results.size() < _powerup_tiles.size():
+			await get_tree().process_frame
+		if not _still_powerup_demo(token):
+			break
+		# One shared pause for the whole board rather than per tile, since the
+		# board turns over as a unit. Which of the two it takes is decided by
+		# whether the player actually stopped anything - a board they cleared
+		# earned the post-stop beat; one that simply ran out gets the other.
+		var any_tapped := false
+		for t in _powerup_tiles:
+			if is_instance_valid(t) and t.last_run_was_tapped:
+				any_tapped = true
+		var delay: float = practice_replay_delay_after_stop if any_tapped 			else practice_replay_delay_after_expire
+		await get_tree().create_timer(delay, true, false, true).timeout
+	# Paired with the emit above and unconditional for the same reason the
+	# legend's own loop is: the duck is reference-counted, so a loop abandoned by
+	# a page switch still owes its decrement.
+	_duck_music(false)
+
+# Fire-and-forget wrapper - GDScript forbids capturing a coroutine handle to
+# await later, so each tile stashes its own result for the group check above.
+func _run_practice_board_tile(tile: HelpDemoTile, start: float, token: int) -> void:
+	var grade := await tile.run_tappable_countdown(start)
+	if _still_powerup_demo(token):
+		_practice_board_results[tile] = grade
+
 
 # --- Page 3: scoring ----------------------------------------------------------
 
@@ -1439,6 +1473,13 @@ func _show_page(index: int, animate: bool) -> void:
 	# would hang over the incoming page instead of leaving with the tile it
 	# belongs to.
 	_hide_caption()
+	# The powerups board runs for exactly as long as its page is the one being
+	# looked at - it is "permanently running" in the sense of never waiting to be
+	# started, not in the sense of ticking away behind two other pages.
+	if _page_index == 1:
+		_start_practice_board()
+	else:
+		_stop_practice_board()
 	if _page_area == null or _track == null:
 		return
 	var target: float = -_page_area.size.x * float(_page_index)
@@ -1477,8 +1518,20 @@ func _begin_drag(pos: Vector2) -> void:
 	_drag_from = pos
 	_dragging = true
 	_swipe_active = false
+	_set_suppress_taps(false)
 	if _types_legend != null:
 		_types_legend.block_taps = false
+
+# Forwarded to every practice tile on the screen while a swipe is in progress -
+# see HelpDemoTile.suppress_taps. block_taps below only stops a swipe from
+# STARTING a demo; a run already in flight owns its own stop and would otherwise
+# be resolved by the release at the end of a drag that merely crossed it.
+func _set_suppress_taps(on: bool) -> void:
+	if _types_legend != null:
+		_types_legend.set_suppress_taps(on)
+	for t in _powerup_tiles:
+		if is_instance_valid(t):
+			t.suppress_taps = on
 
 func _update_drag(pos: Vector2) -> void:
 	if not _dragging:
@@ -1491,6 +1544,7 @@ func _update_drag(pos: Vector2) -> void:
 			# through the drag would have it sitting still over moving content.
 			_hide_caption()
 		_swipe_active = true
+		_set_suppress_taps(true)
 		if _types_legend != null:
 			_types_legend.block_taps = true
 	if _swipe_active:
@@ -1505,6 +1559,14 @@ func _update_drag(pos: Vector2) -> void:
 
 # Whether this release is a practice run's stop rather than a dismissal.
 func _tap_is_practice_stop(pos: Vector2) -> bool:
+	# The powerups board is permanently live, so any of its tiles under the
+	# finger is that tile's stop - same reasoning as the legend's own check.
+	if _page_index == 1:
+		for t in _powerup_tiles:
+			if is_instance_valid(t) and t.is_practice_run_active() \
+					and t.get_global_rect().has_point(pos):
+				return true
+		return false
 	if _types_legend == null or _page_index != 0:
 		return false
 	# The caption sits on top of the page and is dismissed by its own tap, so a
@@ -1536,7 +1598,7 @@ func _end_drag(pos: Vector2) -> void:
 		# then fall through to "start a demo" and restart the very timer the
 		# player was trying to stop, on the exact frame their timing mattered.
 		if not _tap_is_practice_stop(pos):
-			_cancel_all_demos()
+			_cancel_all_demos(false)
 		return
 	var dx: float = pos.x - _drag_from.x
 	var commit: float = _page_area.size.x * SWIPE_COMMIT_RATIO
