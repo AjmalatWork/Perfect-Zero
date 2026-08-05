@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+<!--eye: almond outline plus pupil, standing in for "screen effects
+    intensity" the way an eye reads everywhere else. Two-pass fill+stroke
+    house style, no <text>, no glow filter.-->
+  <path d="M20,128 C55,66 100,40 128,40 C156,40 201,66 236,128 C201,190 156,216 128,216 C100,216 55,190 20,128 Z"
+        fill="#22d3ff" fill-opacity="0.14"/>
+  <path d="M20,128 C55,66 100,40 128,40 C156,40 201,66 236,128 C201,190 156,216 128,216 C100,216 55,190 20,128 Z"
+        fill="none" stroke="#22d3ff" stroke-width="12" stroke-linejoin="round"/>
+  <circle cx="128" cy="128" r="38" fill="#22d3ff" fill-opacity="0.16"/>
+  <circle cx="128" cy="128" r="38" fill="none" stroke="#22d3ff" stroke-width="12"/>
+</svg>

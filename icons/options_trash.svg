@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+<!--trash bin: lid, tapered body, two rib lines - same danger red already
+    used for Hardcore/FAIL (#ff2e5e), same two-pass fill+stroke house style,
+    no <text>, no glow filter.-->
+  <path d="M70,76 L186,76 L176,220 C176,228 168,234 160,234 L96,234 C88,234 80,228 80,220 Z"
+        fill="#ff2e5e" fill-opacity="0.16"/>
+  <path d="M70,76 L186,76 L176,220 C176,228 168,234 160,234 L96,234 C88,234 80,228 80,220 Z"
+        fill="none" stroke="#ff2e5e" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M50,76 L206,76" fill="none" stroke="#ff2e5e" stroke-width="14" stroke-linecap="round"/>
+  <path d="M100,50 L156,50 C162,50 166,54 166,60 L166,76 L90,76 L90,60 C90,54 94,50 100,50 Z"
+        fill="none" stroke="#ff2e5e" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M108,104 L112,206" fill="none" stroke="#ff2e5e" stroke-width="10" stroke-linecap="round"/>
+  <path d="M148,104 L144,206" fill="none" stroke="#ff2e5e" stroke-width="10" stroke-linecap="round"/>
+</svg>

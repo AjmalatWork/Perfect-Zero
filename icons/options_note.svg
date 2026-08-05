@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+<!--single eighth note: round head plus a stem-and-flag stroke, same
+    translucent-fill/solid-stroke two-pass house style as the other icons.
+    No <text>, no glow filter - see options_speaker.svg's note.-->
+  <circle cx="92" cy="176" r="36" fill="#22d3ff" fill-opacity="0.16"/>
+  <circle cx="92" cy="176" r="36" fill="none" stroke="#22d3ff" stroke-width="12"/>
+  <path d="M124,176 L124,44 C124,44 182,58 184,104 C185,124 158,124 146,106"
+        fill="none" stroke="#22d3ff" stroke-opacity="0.16" stroke-width="30"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M124,176 L124,44 C124,44 182,58 184,104 C185,124 158,124 146,106"
+        fill="none" stroke="#22d3ff" stroke-width="12" stroke-linecap="round"
+        stroke-linejoin="round"/>
+</svg>
