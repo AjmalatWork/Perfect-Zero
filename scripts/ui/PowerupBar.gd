@@ -71,6 +71,17 @@ func _ready() -> void:
 	Layout.changed.connect(_build)
 	Powerups.state_changed.connect(_on_state_changed)
 	Powerups.shield_absorbed.connect(_on_shield_absorbed)
+	# Powerups.register_button_origin() is a single global slot per kind, and the
+	# Help screen's practice page now builds real powerup buttons of its own and
+	# registers theirs. Whoever registered last wins, so without this a visit to
+	# that page would leave every activation effect in the NEXT run firing from
+	# where the Help screen's buttons were. Re-claiming them as a run starts
+	# makes the ownership explicit rather than dependent on visit order.
+	GameManager.state_changed.connect(_on_game_state_changed)
+
+func _on_game_state_changed(new_state: int) -> void:
+	if new_state == GameManager.GameState.ENDLESS_PLAYING:
+		_register_origins()
 
 # Rebuilt wholesale on an orientation flip rather than repositioned: the button
 # scales its own internals off its height (see PowerupButton.configure), so a
@@ -101,6 +112,13 @@ func _add_button(kind: int, pos: Vector2, button_size: Vector2) -> void:
 	# and the origin stays correct without re-registering every frame. A rebuild
 	# (orientation flip) re-registers, so the effects follow the buttons.
 	Powerups.register_button_origin(kind, btn.global_position + button_size * 0.5)
+
+# Re-claims the global origin slots for this bar - see _ready()'s note on why
+# that has to be reassertable rather than set once.
+func _register_origins() -> void:
+	for b in _buttons:
+		if is_instance_valid(b):
+			Powerups.register_button_origin(b.kind, b.global_position + b.size * 0.5)
 
 func _on_state_changed() -> void:
 	for b in _buttons:

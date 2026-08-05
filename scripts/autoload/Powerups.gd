@@ -160,6 +160,66 @@ func set_input_suspended(suspended: bool) -> void:
 func is_input_suspended() -> bool:
 	return _input_suspended
 
+# --- Practice mode (Help screen) --------------------------------------------
+# Lets the Help screen's powerup page fire REAL activations - the same signals,
+# the same Juice reactions, the same Shield grade filtering - without the
+# run-state bookkeeping that would make those taps cost the player something.
+# Exactly two things differ from a live run:
+#
+#   Cooldowns are never written (see _cooldown below), so someone exploring the
+#   page can re-fire anything immediately instead of sitting out a 25s Overclock
+#   cooldown they have no run to spend it in.
+#
+#   Effect DURATIONS stay real - shield_window_left, overclock_left and
+#   clear_active_left all count down normally - because those are what emit
+#   shield_expired/overclock_ended, and those signals are how Juice takes its
+#   screen-edge bands back down again. Suppressing them the way cooldowns are
+#   suppressed would leave the Overclock bands burning permanently over a
+#   screen with no Overclock running.
+#
+# Deliberately refuses to engage while a run is armed, which makes practice and
+# armed mutually exclusive by construction rather than by call-site discipline.
+# That is what guarantees the in-game HelpBubble - which is only ever open
+# DURING a live run, and has a powerups page of its own - can never reach in
+# and clobber that run's real charges.
+var _practice_mode: bool = false
+
+func set_practice_mode(on: bool) -> void:
+	if on and _armed:
+		return
+	if _practice_mode == on:
+		return
+	_practice_mode = on
+	var had_shield := shield_window_left > 0.0
+	# Cleared on the way IN as well as out: no leftover window from a previous
+	# visit is still live when the page opens, and nothing the page started is
+	# still counting once it closes.
+	_reset()
+	# _reset() emits overclock_ended for a live Overclock but has no equivalent
+	# for Shield - in a real run Juice.reset_run_effects() takes that aura down
+	# on the same state change that resets this. Practice mode has no such state
+	# change to ride on, so an aura armed here would otherwise outlive the
+	# screen that armed it.
+	if had_shield:
+		shield_expired.emit()
+	state_changed.emit()
+
+func is_practice_mode() -> bool:
+	return _practice_mode
+
+# "Powerups are live" - true during a real run, and during Help-screen practice.
+# Everything that used to test _armed on its own tests this instead, so practice
+# mode inherits the real behaviour rather than reimplementing a parallel copy of
+# it that could drift.
+func _active() -> bool:
+	return _armed or _practice_mode
+
+# Zero in practice mode: not spending charge is the single thing that separates
+# a practice tap from a real one, so every cooldown assignment routes through
+# here rather than each site remembering to check.
+func _cooldown(base: float) -> float:
+	return 0.0 if _practice_mode else base
+
 var shield_window_left: float = 0.0
 var shield_cd_left: float = 0.0
 var clear_cd_left: float = 0.0
@@ -212,12 +272,18 @@ func _arm() -> void:
 	# close path and its leaving-play reset, so this should already be false -
 	# but a fresh run must never start with input silently dead.
 	_input_suspended = false
+	# Same reasoning for practice mode: set_practice_mode() already refuses to
+	# engage while armed and the Help screen clears it on close, so this should
+	# be false already - but if it ever weren't, a real run would silently stop
+	# charging any cooldown at all, which is a far worse failure than the Help
+	# screen briefly not practising.
+	_practice_mode = false
 
 # Countdowns run on unscaled time so a PERFECT's hit-stop (which dips
 # Engine.time_scale to 0.05) can't stretch a cooldown. The node stays
 # PROCESS_MODE_PAUSABLE, though, so the pause menu does freeze them.
 func _process(delta: float) -> void:
-	if not _armed:
+	if not _active():
 		return
 	# A screen-freezing animation holds effect windows and cooldowns alike. This
 	# is what stops an Overclock from expiring partway through Nuke's cascade and
@@ -233,7 +299,7 @@ func _process(delta: float) -> void:
 			shield_window_left = 0.0
 			# Cooldown starts when the window closes, whether it caught a FAIL or
 			# simply elapsed with nothing to catch.
-			shield_cd_left = shield_cooldown
+			shield_cd_left = _cooldown(shield_cooldown)
 			# Nothing happened - the quiet ending. filter_grade() owns the other
 			# one, and having shut the window itself will never reach this branch.
 			shield_expired.emit()
@@ -255,7 +321,7 @@ func _process(delta: float) -> void:
 		overclock_left -= real
 		if overclock_left <= 0.0:
 			overclock_left = 0.0
-			overclock_cd_left = overclock_cooldown
+			overclock_cd_left = _cooldown(overclock_cooldown)
 			overclock_ended.emit()
 		changed = true
 
@@ -271,7 +337,7 @@ func _process(delta: float) -> void:
 # No mutual exclusion between the three - each is gated only by its own charge,
 # so the player can freely stack Shield/Nuke/Overclock however they like.
 func can_activate(kind: int) -> bool:
-	if not _armed:
+	if not _active():
 		return false
 	match kind:
 		Kind.SHIELD:
@@ -308,7 +374,7 @@ func activate(kind: int) -> bool:
 			AudioManager.play_powerup_activate(Kind.SHIELD)
 			shield_armed.emit()
 		Kind.CLEAR_ALL:
-			clear_cd_left = clear_all_cooldown
+			clear_cd_left = _cooldown(clear_all_cooldown)
 			clear_active_left = clear_all_lockout
 			AudioManager.play_powerup_activate(Kind.CLEAR_ALL)
 			clear_all_fired.emit()
@@ -340,10 +406,10 @@ func activate(kind: int) -> bool:
 # needs it so the absorbed burst visibly travels from the offending timer to the
 # shield boundary rather than appearing from nowhere.
 func filter_grade(grade: String, origin_global: Vector2 = Vector2.ZERO) -> String:
-	if not _armed or grade != "FAIL" or shield_window_left <= 0.0:
+	if not _active() or grade != "FAIL" or shield_window_left <= 0.0:
 		return grade
 	shield_window_left = 0.0
-	shield_cd_left = shield_cooldown
+	shield_cd_left = _cooldown(shield_cooldown)
 	AudioManager.play_shield_block()
 	shield_absorbed.emit(origin_global)
 	state_changed.emit()
@@ -351,7 +417,7 @@ func filter_grade(grade: String, origin_global: Vector2 = Vector2.ZERO) -> Strin
 
 # Read every frame by every live TimerSlot.
 func timer_speed_scale() -> float:
-	if _armed and overclock_left > 0.0:
+	if _active() and overclock_left > 0.0:
 		return overclock_speed_multiplier
 	return 1.0
 
@@ -359,7 +425,7 @@ func timer_speed_scale() -> float:
 # top of the existing tally x multiplier model rather than being a second,
 # parallel score calculation.
 func score_scale() -> float:
-	if _armed and overclock_left > 0.0:
+	if _active() and overclock_left > 0.0:
 		return overclock_score_multiplier
 	return 1.0
 

@@ -193,8 +193,10 @@ func _on_timer_stopped(source: TimerSlot, grade: String, type: int, distance: fl
 func _bonus_factor(source: TimerSlot, grade: String) -> float:
 	return compute_bonus_factor(source.data.timer_type, source.speed_boost_stacks, grade)
 
-# Shared so Endless mode computes bonuses identically (kept out of ScoreManager,
-# which stays type-agnostic).
+# Shared so Endless mode computes bonuses identically. The MAPPING (which type
+# earns which factor, and that only scoring tiers earn one) stays here, where
+# the timer types live; the VALUES are @exports on ScoreManager so they can be
+# retuned from the Inspector alongside the rest of the scoring balance.
 static func compute_bonus_factor(timer_type: int, stacks: int, grade: String) -> float:
 	var scoring_grade := grade == "PERFECT" or grade == "GOOD" or grade == "OKAY"
 
@@ -202,14 +204,14 @@ static func compute_bonus_factor(timer_type: int, stacks: int, grade: String) ->
 	match timer_type:
 		TimerData.TimerType.GOLDEN:
 			if grade == "PERFECT":
-				type_factor = 2.0
+				type_factor = ScoreManager.bonus_golden_perfect
 		TimerData.TimerType.BLACKOUT:
 			if scoring_grade:
-				type_factor = 2.5
+				type_factor = ScoreManager.bonus_blackout
 
 	var stack_factor := 1.0
 	if scoring_grade:
-		stack_factor = 1.0 + 0.25 * stacks
+		stack_factor = 1.0 + ScoreManager.bonus_red_stack_step * stacks
 
 	return type_factor * stack_factor
 

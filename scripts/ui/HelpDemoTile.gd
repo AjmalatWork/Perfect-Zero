@@ -67,6 +67,26 @@ const SELECTED_SHADOW_SIZE := 20.0
 const SELECTED_SHADOW_ALPHA := 0.55
 const SELECTED_BORDER_WIDTH := 5.0
 
+# --- Tap affordance -----------------------------------------------------------
+# A practice tile looks identical to a scripted one while it runs, so nothing
+# about it says the countdown is waiting on the player rather than about to
+# resolve itself. This is that tell: a small pulsing "TAP" under the digit, up
+# only while a run is genuinely stoppable, so it never promises interactivity a
+# scripted demo won't honour.
+#
+# Sits low rather than centred because the digit label fills the whole tile and
+# centres in it - at HelpScreen.TIMER_DIGIT_RATIO (0.27 of tile height) the
+# glyphs occupy roughly the middle third, leaving the bottom quarter clear.
+# Text, not an icon: this project's SVG rules forbid <text> in icons and the
+# glyph would have to be hand-drawn, for a label three characters long.
+const TAP_HINT_TEXT := "TAP"
+const TAP_HINT_TOP_RATIO := 0.74
+const TAP_HINT_HEIGHT_RATIO := 0.20
+const TAP_HINT_FONT_RATIO := 0.6      # of this tile's own name font
+const TAP_HINT_PULSE_SEC := 0.7
+const TAP_HINT_ALPHA_MIN := 0.35
+const TAP_HINT_ALPHA_MAX := 1.0
+
 var timer_type: int = TimerData.TimerType.NORMAL
 var value: float = 0.0
 
@@ -74,6 +94,27 @@ var value: float = 0.0
 # the tree; _ready applies it, because assigning mouse_filter directly at the
 # call site would just be overwritten there.
 var interactive: bool = true
+
+# Opt-in: this tile participates in REAL powerup effects, the way a board
+# TimerSlot does - Overclock scales its countdown rate, and Shield gets offered
+# its FAILs to downgrade. Off by default, so the Timer Types legend keeps the
+# full cosmetic isolation this class was built for (see the header).
+#
+# Only the powerups practice grid sets it, and only ever while
+# Powerups.set_practice_mode() is on - which cannot engage during a real run,
+# so a tile reading these can never be reading a live run's charges. Reaching
+# for Powerups rather than mirroring its numbers locally is the point: the page
+# exists to show what the real powerup does, and a local copy is exactly the
+# kind of thing that drifts from the board it is teaching.
+var live_powerups: bool = false
+
+# Set by the host while a page-swipe gesture is in progress. A swipe that
+# happens to pass over a running tile still delivers a release to it, and
+# without this that release resolves the run - so dragging between pages would
+# stop whatever timer the finger crossed, and grade it on wherever the drag
+# started. The host's own tap handlers already ignore swipes; this is the same
+# guard for the tile's self-owned stop, which those handlers never see.
+var suppress_taps: bool = false
 
 var _accent: Color
 var _base_bg: Color
@@ -110,6 +151,39 @@ var _urgency_pulse: float = 0.0
 var _urgency_envelope: float = 0.0
 var _urgency_phase: float = 0.0
 var _urgency_past_zero: bool = false
+
+# --- Tap capture (practice runs only) ----------------------------------------
+# True only while a run_tappable_*() coroutine is in flight. Outside one, taps
+# are purely a "the player picked this tile" notification for the host and this
+# whole block stays inert, so the scripted play_*() demos are unaffected.
+var _awaiting_tap: bool = false
+var _tap_pressed: bool = false
+var _tap_consumed: bool = false
+# Set by force_resolve_practice() - a resolution nobody tapped for (Nuke).
+var _forced_grade: String = ""
+# `value` sampled at the instant the finger went DOWN, which is when the player
+# actually committed to their timing.
+#
+# A run only RESOLVES on release, so that a swipe starting on a tile can still
+# be classified as a swipe rather than stopping the timer under it (see
+# _gui_input's own note on why this tile reports taps on release at all). But
+# grading an ~80ms-long tap off the release instant would score every practice
+# stop that much later than the identical tap on the real board, where
+# TimerSlot._gui_input() resolves on press. The PERFECT window is 0.05s wide -
+# so that gap is not a rounding difference, it is wider than the window being
+# practised. Sampling on press and resolving on release gets both properties.
+var _tap_value: float = 0.0
+
+# Whether the most recently finished run ended on a player tap rather than on
+# running the clock out. Hosts pick their replay delay from this: "I never got
+# to it" and "I stopped it and got a grade" are different beats, and the grade
+# alone cannot separate them - a late enough tap grades FAIL too, exactly like
+# never tapping at all.
+var last_run_was_tapped: bool = false
+
+var _tap_hint: Label
+var _tap_hint_tween: Tween
+var _flash_tween: Tween
 
 func configure(p_type: int, display_name: String, digit_size: int, name_size: int) -> void:
 	timer_type = p_type
@@ -151,6 +225,21 @@ func configure(p_type: int, display_name: String, digit_size: int, name_size: in
 	_name_label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	add_child(_name_label)
 
+	_tap_hint = Label.new()
+	_tap_hint.text = TAP_HINT_TEXT
+	# Floored so the smallest tile still clears the project's readability bar
+	# rather than scaling this into an illegible smudge.
+	_tap_hint.add_theme_font_size_override("font_size",
+		maxi(roundi(name_size * TAP_HINT_FONT_RATIO), 12))
+	_tap_hint.add_theme_color_override("font_color", TEXT_FILL)
+	_tap_hint.add_theme_color_override("font_outline_color", _accent)
+	_tap_hint.add_theme_constant_override("outline_size", 5)
+	_tap_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_tap_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_tap_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tap_hint.visible = false
+	add_child(_tap_hint)
+
 	_layout_children()
 	_set_digit_mode(false)
 
@@ -181,6 +270,9 @@ func _layout_children() -> void:
 	_digit.size = s
 	_name_label.position = Vector2.ZERO
 	_name_label.size = s
+	if _tap_hint != null:
+		_tap_hint.position = Vector2(0.0, s.y * TAP_HINT_TOP_RATIO)
+		_tap_hint.size = Vector2(s.x, s.y * TAP_HINT_HEIGHT_RATIO)
 
 # Toggles between the two mutually-exclusive faces of a tile: its name (idle,
 # nothing running yet) and its live digit (a play_*() sequence is active).
@@ -198,9 +290,28 @@ func _set_digit_mode(on: bool) -> void:
 # between, and a press-time signal would fire before it could tell a tap from
 # the start of a swipe.
 func _gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and not event.pressed \
-			and event.button_index == MOUSE_BUTTON_LEFT:
-		tapped.emit(self)
+	if not (event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+	if event.pressed:
+		# Press only samples the timing - see _tap_value. Deliberately does not
+		# emit `tapped`, preserving this tile's release-reports-a-tap contract.
+		if _awaiting_tap:
+			_tap_pressed = true
+			_tap_value = value
+		return
+	# The gesture turned out to be a page swipe, not a tap - see suppress_taps.
+	# Clearing _tap_pressed as well means the drag cannot leave a stale sample
+	# behind for some later release to resolve against.
+	if suppress_taps:
+		_tap_pressed = false
+		return
+	# _tap_pressed gates this so a run that STARTS with a finger already down
+	# can't be resolved by that finger coming up: without it the release would
+	# grade against a _tap_value belonging to no run at all (a stale 0.0, which
+	# reads as a free PERFECT).
+	if _awaiting_tap and _tap_pressed and not _tap_consumed:
+		_tap_consumed = true
+	tapped.emit(self)
 
 # --- Idle state -------------------------------------------------------------
 
@@ -214,6 +325,7 @@ func _gui_input(event: InputEvent) -> void:
 # tile after it's been reset.
 func idle() -> void:
 	_play_token += 1
+	_clear_tap_capture()
 	_rate_multiplier = 1.0
 	_paused = false
 	value = 0.0
@@ -223,11 +335,14 @@ func idle() -> void:
 	_set_digit_mode(false)
 	if _pop_tween != null and _pop_tween.is_valid():
 		_pop_tween.kill()
+	if _flash_tween != null and _flash_tween.is_valid():
+		_flash_tween.kill()
 	if _grade_sign_tween != null and _grade_sign_tween.is_valid():
 		_grade_sign_tween.kill()
 	if _grade_sign != null and is_instance_valid(_grade_sign):
 		_grade_sign.queue_free()
 	scale = Vector2.ONE
+	set_focus_lifted(false)
 	set_selected(false)
 
 # Stops whatever play_*() coroutine is currently running without resetting the
@@ -236,6 +351,7 @@ func idle() -> void:
 # showing) rather than snap it back to idle first.
 func cancel_playback() -> void:
 	_play_token += 1
+	_clear_tap_capture()
 
 # --- Presence (bystander/preview tiles that shouldn't exist until the timer
 # they demonstrate is actually tapped) ---------------------------------------
@@ -521,6 +637,279 @@ func play_blur(duration: float) -> void:
 		if _digit != null:
 			_digit.text = "0.0%d" % digit
 
+# --- Tappable practice runs ---------------------------------------------------
+# The Help screen's practice mode. Where the scripted play_*() demos above tap
+# themselves at a pre-chosen moment to illustrate a rule, these run a real
+# countdown that the PLAYER stops, graded against TimerSlot's own windows via
+# the shared TimerSlot.grade_for_distance()/stop_distance_for() statics - so
+# practising a PERFECT here is practising the same 0.05s the board asks for,
+# not a lookalike with its own boundaries.
+#
+# Practice mode does NOT make every tile tick at once. The header's rule still
+# holds: a tile sits idle showing its name until it is tapped, that first tap
+# starts its run, and only then is it live and stoppable. Everything else on
+# the page stays idle. So the fix recorded up there - one focused animation per
+# tap, after six simultaneous ones were reported as making it hard to tell
+# where to even look - survives practice mode rather than being undone by it.
+# The only thing that changes is who stops the running tile: the player, over
+# and over, instead of a script tapping it once at a pre-chosen moment.
+#
+# That the STARTING tap cannot also resolve the run it just started falls out
+# of the _tap_pressed guard for free: at the moment that tap's release lands,
+# _awaiting_tap is still false (no run yet), so nothing is consumed, and
+# _begin_tappable_run() then clears the flag anyway. Worth knowing before
+# anyone decides that guard looks redundant.
+#
+# Each of these is ONE run: it resolves, plays the same feedback a real stop
+# gets, and returns its grade rather than looping. Restart policy is
+# deliberately left to the host, because it differs by page - page 1 restarts
+# each tile independently on its own delay, while the powerups page restarts
+# its whole 2x2 grid only once all four tiles have resolved. Neither is a
+# property of a tile.
+#
+# Returns "" if the run was cancelled mid-flight (idle(), cancel_playback(), or
+# a new play_*() call bumped the token). Callers MUST check for that before
+# treating the result as a grade - an empty string is not a valid grade and
+# will not match any branch of ScoreManager.grade_color()/play_grade().
+
+# True while a run is live and waiting for the player's stop. Hosts branch on
+# this to tell a "start this tile's practice loop" tap from a "this tap IS the
+# stop" one, both of which arrive as the same `tapped` signal. A host that
+# restarted on every `tapped` would cancel the very run the player was trying
+# to stop, and would do it on the exact frame their timing mattered most.
+#
+# Exposed rather than left to the host to track alongside its own idea of
+# which tile is running: that second copy would have to be kept in step with
+# every cancel/idle/rebuild path in here, and the one that matters is this one.
+func is_practice_run_active() -> bool:
+	return _awaiting_tap
+
+# Raised above the host's full-screen focus dim while this tile is the one
+# being practised, so that dim can cover the whole screen without covering the
+# very thing it exists to focus attention on.
+#
+# Must stay BELOW the caption's own z (HelpScreen sets that to 10) - the
+# caption is anchored beside the tile it describes and has to read over it
+# where the two meet.
+const FOCUS_Z_INDEX := 5
+
+func set_focus_lifted(on: bool) -> void:
+	z_index = FOCUS_Z_INDEX if on else 0
+
+func _begin_tappable_run() -> void:
+	# The previous run's grade flash may still be animating bg_color/shadow_size
+	# (see _flash_grade) - stop it and put the panel back to its resting look,
+	# or it spends the start of this run overwriting the urgency glow with the
+	# tail of the last stop's flash.
+	if _flash_tween != null and _flash_tween.is_valid():
+		_flash_tween.kill()
+	if _panel_style != null:
+		_panel_style.bg_color = _base_bg
+		_panel_style.border_color = _accent
+	_clear_tap_capture()
+	_awaiting_tap = true
+	_set_tap_hint(true)
+
+func _clear_tap_capture() -> void:
+	_awaiting_tap = false
+	_tap_pressed = false
+	_tap_consumed = false
+	_tap_value = 0.0
+	_forced_grade = ""
+	_set_tap_hint(false)
+
+# Resolves the in-flight run at `grade` with no tap - the practice equivalent of
+# TimerSlot.force_resolve(), which is how Nuke cashes in every live timer on the
+# real board. Recorded for the run loop to notice on its next frame rather than
+# resolved inline, so a forced resolution leaves through the same single exit a
+# tapped one does instead of opening a second path out.
+func force_resolve_practice(grade: String) -> void:
+	if _awaiting_tap:
+		_forced_grade = grade
+
+# Countdown rate contribution from live powerups, or 1.0 when this tile is not
+# wired to them. Overclock is the only thing that moves it - the very same
+# Powerups.timer_speed_scale() every real TimerSlot reads every frame.
+func _powerup_rate() -> float:
+	return Powerups.timer_speed_scale() if live_powerups else 1.0
+
+# Pulse depth (not presence) rides Settings.effect_scale(), the same treatment
+# every other softenable local effect on this tile gets. Reduce-screen-effects
+# damps the throb without taking the hint away - it is the only thing telling a
+# player the tile is waiting on them, so removing it outright would cost them
+# the interaction rather than just the motion.
+func _set_tap_hint(on: bool) -> void:
+	if _tap_hint == null:
+		return
+	if _tap_hint_tween != null and _tap_hint_tween.is_valid():
+		_tap_hint_tween.kill()
+	_tap_hint.visible = on
+	if not on:
+		return
+	_tap_hint.modulate.a = TAP_HINT_ALPHA_MAX
+	if not is_inside_tree():
+		return
+	var min_a: float = lerpf(TAP_HINT_ALPHA_MAX, TAP_HINT_ALPHA_MIN, Settings.effect_scale())
+	_tap_hint_tween = create_tween()
+	_tap_hint_tween.set_loops()
+	_tap_hint_tween.tween_property(_tap_hint, "modulate:a", min_a, TAP_HINT_PULSE_SEC) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_tap_hint_tween.tween_property(_tap_hint, "modulate:a", TAP_HINT_ALPHA_MAX, TAP_HINT_PULSE_SEC) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+
+# Shared exit for all three runs below: same resolution feedback a scripted
+# demo gets, tap state cleared, grade handed back to the awaiting host. Each
+# caller passes its own frozen-digit text because that is the only part of
+# resolving that genuinely differs between the types.
+func _finish_tappable_run(grade: String, frozen_digit: String, bonus_text: String) -> String:
+	# Read before _clear_tap_capture() wipes it - this is the only moment the
+	# tapped/expired distinction still exists.
+	last_run_was_tapped = _tap_consumed
+	_clear_tap_capture()
+	# Shield's downgrade, on a tile wired to live powerups. Applied here - ahead
+	# of the flash, the grade sign and the value returned to the host - for the
+	# same reason TimerSlot._resolve_stop() applies it ahead of its own: the
+	# player has to see the MISS they actually got, not a FAIL that quietly
+	# scores as something else. Returns `grade` untouched when no window is open.
+	if live_powerups:
+		grade = Powerups.filter_grade(grade, global_position + size * 0.5)
+	play_grade(grade, frozen_digit, 0.0, bonus_text)
+	return grade
+
+# Normal/Red/Blue/Blackout. Counts down from `start` through zero and on to
+# TimerSlot.EXPIRE_THRESHOLD, which is where the real board gives up on a timer
+# nobody clicked - so "I did nothing" reaches the same FAIL verdict here as it
+# does in a run. `blackout_at` behaves exactly as in play_countdown().
+func run_tappable_countdown(start: float, blackout_at: float = -1.0,
+		bonus_text: String = "") -> String:
+	var token := _play_token
+	value = start
+	_begin_tappable_run()
+	_set_digit_mode(true)
+	_render_countdown(blackout_at)
+	var tick_accum := 0.0
+	var grade := ""
+	while true:
+		await get_tree().process_frame
+		if token != _play_token or not is_instance_valid(self):
+			return ""
+		if _forced_grade != "":
+			grade = _forced_grade
+			break
+		if _tap_consumed:
+			grade = TimerSlot.grade_for_distance(TimerSlot.stop_distance_for(_tap_value))
+			break
+		if value <= TimerSlot.EXPIRE_THRESHOLD:
+			grade = "FAIL"
+			break
+		if _paused:
+			continue
+		var dt := get_process_delta_time()
+		value = maxf(value - dt * _rate_multiplier * _powerup_rate(),
+			TimerSlot.EXPIRE_THRESHOLD)
+		_render_countdown(blackout_at)
+		_update_urgency(dt, value, value <= 0.0, TimerSlot.URGENCY_RANGE)
+		_apply_urgency_to_panel(blackout_at >= 0.0 and value <= blackout_at)
+		tick_accum += dt
+		if tick_accum >= 1.0:
+			tick_accum = 0.0
+			if blackout_at >= 0.0:
+				AudioManager.play_blackout_tick(get_instance_id())
+			else:
+				var progress: float = clampf(1.0 - value / maxf(start, 0.0001), 0.0, 1.0)
+				AudioManager.play_tick(lerpf(1.0, 2.5, progress), get_instance_id())
+	# The digits freeze at the value the finger went down on, not wherever the
+	# countdown drifted to by the release frame - that is the number being
+	# graded, so showing anything else would have the tile report a grade its
+	# own display contradicts. For a Blackout this also overwrites the "??.??"
+	# it was hiding behind, which is the whole point: the real board reveals the
+	# true stopped value on resolution too, otherwise a player can never learn
+	# what they were actually hitting.
+	var frozen: String = "%.2f" % (_tap_value if _tap_consumed else value)
+	return _finish_tappable_run(grade, frozen, bonus_text)
+
+# Golden. Never counts and never expires - it just churns until the player
+# takes it, which is exactly what the real one does (see
+# TimerSlot._process_golden). No urgency glow: there is no zero being
+# approached for one to signal, the same reason play_blur() has none.
+func run_tappable_golden(bonus_text: String = "") -> String:
+	var token := _play_token
+	_begin_tappable_run()
+	_set_digit_mode(true)
+	var interval := 1.0 / GOLDEN_BLUR_SPEED
+	var accumulator := 0.0
+	var digit := 0
+	while not _tap_consumed and _forced_grade == "":
+		await get_tree().process_frame
+		if token != _play_token or not is_instance_valid(self):
+			return ""
+		var dt := get_process_delta_time()
+		accumulator += dt
+		while accumulator >= interval:
+			accumulator -= interval
+			digit = randi() % 10
+		if _digit != null:
+			_digit.text = "0.0%d" % digit
+	# Guaranteed PERFECT at any moment, landing on a clean 0.00 rather than
+	# whichever blur digit happened to be up - TimerSlot._resolve_stop() does
+	# the same, so the payoff digit is identical every time. A Nuke sweeping the
+	# board cashes it in at PERFECT too, so the forced grade and the tapped one
+	# agree here by construction.
+	var golden_grade: String = _forced_grade if _forced_grade != "" else "PERFECT"
+	return _finish_tappable_run(golden_grade, "0.00", bonus_text)
+
+# Decay. Climbs from 0.00 and grades on which ceiling tier it was stopped in,
+# reaching `miss_end` as a MISS. Decay can never FAIL or cost a life - a
+# locked-in rule, see play_decay_climb() - so there is no expiry branch here
+# beyond that MISS.
+func run_tappable_decay(perfect_end: float, good_end: float, okay_end: float,
+		miss_end: float) -> String:
+	var token := _play_token
+	value = 0.0
+	_begin_tappable_run()
+	_set_digit_mode(true)
+	var shown_tier := -1
+	var tick_accum := 0.0
+	var grade := ""
+	while true:
+		await get_tree().process_frame
+		if token != _play_token or not is_instance_valid(self):
+			return ""
+		if _forced_grade != "":
+			grade = _forced_grade
+			break
+		if _tap_consumed:
+			grade = TimerSlot.DECAY_TIER_GRADES[
+				_decay_tier_for(_tap_value, perfect_end, good_end, okay_end)]
+			break
+		if value >= miss_end:
+			grade = "MISS"
+			break
+		if not _paused:
+			var dt := get_process_delta_time()
+			value = minf(value + dt * _rate_multiplier * _powerup_rate(), miss_end)
+			tick_accum += dt
+			if tick_accum >= 1.0:
+				tick_accum = 0.0
+				var progress: float = clampf(value / maxf(miss_end, 0.0001), 0.0, 1.0)
+				AudioManager.play_tick(lerpf(1.0, 2.5, progress), get_instance_id())
+			_update_urgency(dt, clampf(value / maxf(miss_end, 0.0001), 0.0, 1.0), false)
+			_apply_urgency_to_panel()
+		if _digit != null:
+			_digit.text = "%.2f" % value
+		var tier := _decay_tier_for(value, perfect_end, good_end, okay_end)
+		if tier != shown_tier:
+			shown_tier = tier
+			var tier_color := TimerTypeInfo.decay_tier_color(tier)
+			_set_border(tier_color)
+			if _panel_style != null:
+				_panel_style.bg_color = tier_color.darkened(0.86)
+			# Keeps the urgency glow's shadow hue on the current tier - see
+			# play_decay_climb()'s own comment on this exact assignment.
+			_accent = tier_color
+	var frozen: String = "%.2f" % (_tap_value if _tap_consumed else value)
+	return _finish_tappable_run(grade, frozen, "")
+
 # --- Reactions (bystander tiles, driven by a Red/Blue tile resolving) -------
 
 # Permanent: never reverts, matching TimerSlot.apply_speedup(). Whatever
@@ -611,8 +1000,19 @@ func play_grade(grade: String, frozen_digit: String, hold: float, bonus_text: St
 			AudioManager.play_expire()
 
 # Same match-on-grade panel treatment as TimerSlot._play_stop_flash().
+#
+# Held in a field rather than a local because it animates shadow_size, which the
+# urgency glow also writes every frame. A practice tile replays, so the next run
+# can begin while this is still in flight (the flash runs 0.35s; the replay
+# delays are Inspector-tunable and can be set shorter), and the two would then
+# fight over the same property - the flash winning, because a Tween's
+# interpolation overwrites whatever the per-frame write just put there. Same
+# class of conflict TimerSlot._panel_transition_lock exists for.
 func _flash_grade(grade: String) -> void:
+	if _flash_tween != null and _flash_tween.is_valid():
+		_flash_tween.kill()
 	var tween := create_tween()
+	_flash_tween = tween
 	tween.set_parallel(true)
 	match grade:
 		"PERFECT":

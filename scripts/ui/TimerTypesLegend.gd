@@ -10,7 +10,7 @@ class_name TimerTypesLegend
 #
 # Sizing/timing constants are deliberately NOT redeclared here - they're read
 # straight off HelpScreen's own consts (HelpScreen.TIMER_TILE_PORTRAIT,
-# HelpScreen.NORMAL_START, etc.), which is what guarantees this component
+# HelpScreen.PRACTICE_START, etc.), which is what guarantees this component
 # renders and behaves pixel-for-pixel like HelpScreen's page 1 always did,
 # with nothing to keep in sync by hand.
 #
@@ -38,10 +38,30 @@ const MUTED := Color("8b90a8")
 # demo. HelpBubble never needs to set it.
 var block_taps: bool = false
 
+# Practice-mode replay pacing, assigned by the host. Plain vars rather than the
+# statically-read HelpScreen consts this component uses everywhere else,
+# because these two are @export instance vars on HelpScreen (Inspector-tunable)
+# and there is no host reference here to read them through - see
+# HelpScreen._build_page_types(), which pushes them in. Defaults match
+# HelpScreen's own so HelpBubble, which sets neither, still behaves sensibly.
+var replay_delay_after_stop: float = 2.0
+var replay_delay_after_expire: float = 2.0
+
+# Host opt-in: raise the focused tile above the host's own full-screen focus
+# dim by z_index. HelpScreen sets this, because its dim is a sibling of the
+# whole content tree and would otherwise cover the tile being practised.
+# HelpBubble leaves it off - the bubble is already a modal sitting entirely
+# above the board (its root is at z 90), so lifting a tile inside it would only
+# raise that tile above the bubble's own furniture for no gain.
+var lift_focused_tiles: bool = false
+
 var _demo_token: int = 0
 var _type_tiles: Array[HelpDemoTile] = []
 var _bystander_tiles: Array[HelpDemoTile] = []
 var _bystander_row: HBoxContainer
+# Grades from the bystanders' own parallel runs, keyed by tile - see
+# _run_bystander for why a parallel coroutine has to report this way.
+var _bystander_results: Dictionary = {}
 
 func _s() -> float:
 	return HelpScreen.PORTRAIT_SCALE if Layout.is_portrait() else 1.0
@@ -51,9 +71,6 @@ func _fs(base: int) -> int:
 
 func _still_demo(token: int) -> bool:
 	return token == _demo_token
-
-func _random_perfect_stop() -> float:
-	return randf_range(0.0, TimerSlot.PERFECT_MAX)
 
 # --- Build --------------------------------------------------------------------
 
@@ -138,8 +155,15 @@ func _build_type_group(heading: String, types: Array, with_bystanders: bool) -> 
 		for i in range(2):
 			var b := _make_tile(TimerData.TimerType.NORMAL,
 				TimerTypeInfo.name_of(TimerData.TimerType.NORMAL))
-			# Bystanders are scenery, not choices.
-			b.interactive = false
+			# Timed by the player too now, not scenery - a Red/Blue pass runs
+			# all three tiles together and all three are stoppable.
+			#
+			# Deliberately NOT connected to _on_type_tapped: a bystander's tap
+			# is only ever its own run's stop, which the tile consumes itself
+			# before the signal fires. Routing it here would try to start a
+			# second practice loop, for a plain Normal timer, on top of the
+			# Red/Blue pass that already owns this tile.
+			b.interactive = true
 			b.modulate.a = 0.0
 			_bystander_tiles.append(b)
 			_bystander_row.add_child(b)
@@ -189,34 +213,135 @@ func _divider_width() -> float:
 
 # --- Tap dispatch + demos ------------------------------------------------------
 
-# Dispatches to one scripted, complete demonstration per type - a tile plays
-# out its entire rule end to end (spawn through resolution) while every tile
-# not involved dims out of the way. Bumping _demo_token first is what lets a
-# second tap (same tile or a different one) cleanly interrupt whatever's still
-# playing.
+# Starts one tile's practice loop. Tiles sit idle showing their name until
+# tapped; that tap starts the loop and only then is the tile live and
+# stoppable. Everything else on the page stays idle, so the "one focused
+# animation at a time" rule (see HelpDemoTile's header for why six simultaneous
+# ones was rejected) still holds - what changed is that the player stops the
+# running tile now, repeatedly, instead of a script tapping it once.
+#
+# Bumping _demo_token first is what lets a tap on a DIFFERENT tile cleanly
+# abandon whatever loop is still running.
 func _on_type_tapped(tile: HelpDemoTile) -> void:
 	if block_taps:
 		return
+	# A tap on the tile that is already running IS that run's stop - the tile
+	# consumed it itself before this signal ever arrived. Restarting the loop
+	# here would cancel the run on the exact frame the player's timing mattered.
+	if tile.is_practice_run_active():
+		return
+	# Bumping the token only ends the LOOP. The outgoing tile's own run
+	# coroutine keeps counting - and keeps swallowing taps as its stop - until
+	# its own _play_token moves on, which only idle() does. Stopping the tiles
+	# before the bump is what makes a tap on a second tile actually abandon the
+	# first rather than leave it running invisibly underneath.
+	_stop_all_tiles()
 	_demo_token += 1
 	var token := _demo_token
 	var text := "%s - %s" % [TimerTypeInfo.name_of(tile.timer_type),
 		TimerTypeInfo.desc_of(tile.timer_type)]
 	var accent: Color = TimerTypeInfo.color_of(tile.timer_type)
 	type_tapped.emit(tile, text, accent)
+	_run_practice_loop(tile, token)
 
+# Runs `tile` over and over until something bumps the token. Each pass is one
+# real, stoppable run followed by the pause its ending earned - which is why
+# the tile reports last_run_was_tapped rather than the host inferring it from
+# the grade: a late enough tap grades FAIL just like never tapping at all, and
+# those two endings want different beats.
+func _run_practice_loop(tile: HelpDemoTile, token: int) -> void:
+	duck_requested.emit(true)
+	var focus := _focus_group(tile)
+	_dim_page1_except(focus)
+	if lift_focused_tiles:
+		for t in focus:
+			if is_instance_valid(t):
+				t.set_focus_lifted(true)
+	tile.set_selected(true)
+	while _still_demo(token) and is_instance_valid(tile):
+		var grade := await _run_practice_pass(tile, token)
+		# "" means the run was cancelled mid-flight (see HelpDemoTile) - the
+		# tile has already moved on to whatever cancelled it, so this loop must
+		# not restart it or touch it again.
+		if grade == "" or not _still_demo(token) or not is_instance_valid(tile):
+			break
+		var delay: float = replay_delay_after_stop if tile.last_run_was_tapped \
+			else replay_delay_after_expire
+		await get_tree().create_timer(delay, true, false, true).timeout
+	# Unconditional, and paired with the emit(true) above. The host's duck is
+	# reference-counted, so gating this on _still_demo() would mean every loop
+	# abandoned by a tap on another tile skipped its own decrement and left the
+	# music one step further from ever coming back up.
+	duck_requested.emit(false)
+
+# One pass. Red and Blue take the bystander path because their whole rule is
+# what they do to other timers; every other type is just its own run.
+func _run_practice_pass(tile: HelpDemoTile, token: int) -> String:
 	match tile.timer_type:
-		TimerData.TimerType.NORMAL:
-			_play_normal_demo(tile, token)
 		TimerData.TimerType.GOLDEN:
-			_play_golden_demo(tile, token)
-		TimerData.TimerType.BLACKOUT:
-			_play_blackout_demo(tile, token)
+			# Never counts, never expires - it churns until taken, so there is
+			# no expiry beat for it and its loop only ever turns over on a tap.
+			return await tile.run_tappable_golden("x2")
 		TimerData.TimerType.DECAY:
-			_play_decay_demo(tile, token)
-		TimerData.TimerType.RED:
-			_play_red_demo(tile, token)
-		TimerData.TimerType.BLUE:
-			_play_blue_demo(tile, token)
+			return await tile.run_tappable_decay(
+				HelpScreen.PRACTICE_DECAY_PERFECT_END, HelpScreen.PRACTICE_DECAY_GOOD_END,
+				HelpScreen.PRACTICE_DECAY_OKAY_END, HelpScreen.PRACTICE_DECAY_MISS_END)
+		TimerData.TimerType.BLACKOUT:
+			return await tile.run_tappable_countdown(
+				HelpScreen.PRACTICE_START, HelpScreen.BLACKOUT_THRESHOLD, "x2.5")
+		TimerData.TimerType.RED, TimerData.TimerType.BLUE:
+			return await _run_reaction_pass(tile, token)
+	return await tile.run_tappable_countdown(HelpScreen.PRACTICE_START)
+
+# Red/Blue plus their two bystanders, all three tappable and all three timed by
+# the player. The bystanders start later than the acting tile on purpose (see
+# HelpScreen.PRACTICE_BYSTANDER_STARTS) so they are still counting when the
+# reaction lands and it can be seen arriving.
+func _run_reaction_pass(tile: HelpDemoTile, token: int) -> String:
+	_bystander_results.clear()
+	for b in _bystander_tiles:
+		b.set_present(true)
+	for i in range(_bystander_tiles.size()):
+		_run_bystander(_bystander_tiles[i], HelpScreen.PRACTICE_BYSTANDER_STARTS[i], token)
+
+	var grade := await tile.run_tappable_countdown(HelpScreen.PRACTICE_START)
+	if grade == "" or not _still_demo(token) or not is_instance_valid(tile):
+		return grade
+
+	# Fires on ANY resolved grade, not just a good one - EndlessRunner's own
+	# _dispatch_reaction does the same. The reaction is about the timer
+	# resolving at all, so a demo that only showed it after a clean stop would
+	# be teaching a rule the board does not have.
+	for b in _bystander_tiles:
+		if not is_instance_valid(b):
+			continue
+		if tile.timer_type == TimerData.TimerType.RED:
+			b.react_speedup_permanent()
+		else:
+			b.react_freeze(HelpScreen.BLUE_FREEZE_SEC)
+
+	# The group restarts together, so the pass isn't over until the bystanders
+	# have been stopped (or run out) too - otherwise a restart would yank live
+	# timers out from under a player still working on them.
+	while _still_demo(token) and _bystander_results.size() < _bystander_tiles.size():
+		await get_tree().process_frame
+	return grade
+
+# Fire-and-forget wrapper: GDScript forbids capturing a coroutine's handle to
+# await later, so a parallel run has to stash its own result instead of
+# returning it.
+func _run_bystander(b: HelpDemoTile, start: float, token: int) -> void:
+	var g := await b.run_tappable_countdown(start)
+	if _still_demo(token):
+		_bystander_results[b] = g
+
+# Which tiles stay lit while `tile` practises. Red and Blue keep their
+# bystanders visible because those are part of what is being demonstrated.
+func _focus_group(tile: HelpDemoTile) -> Array:
+	if tile.timer_type == TimerData.TimerType.RED \
+			or tile.timer_type == TimerData.TimerType.BLUE:
+		return [tile] + _bystander_tiles
+	return [tile]
 
 func _dim_page1_except(keep: Array) -> void:
 	for t in _type_tiles:
@@ -226,133 +351,33 @@ func _undim_page1() -> void:
 	for t in _type_tiles:
 		t.set_dimmed(false)
 
-func _play_normal_demo(tile: HelpDemoTile, token: int) -> void:
-	duck_requested.emit(true)
-	_dim_page1_except([tile])
-	tile.set_selected(true)
-	var stop := _random_perfect_stop()
-	await tile.play_countdown(HelpScreen.NORMAL_START, stop)
-	if not _still_demo(token) or not is_instance_valid(tile):
-		duck_requested.emit(false)
-		return
-	tile.play_grade("PERFECT", "%.2f" % stop, HelpScreen.RESULT_HOLD_SEC)
-	await get_tree().create_timer(HelpScreen.RESULT_HOLD_SEC, true, false, true).timeout
-	duck_requested.emit(false)
-	_end_type_demo(tile, token)
-
-func _play_golden_demo(tile: HelpDemoTile, token: int) -> void:
-	duck_requested.emit(true)
-	_dim_page1_except([tile])
-	tile.set_selected(true)
-	await tile.play_blur(HelpScreen.GOLDEN_BLUR_SEC)
-	if not _still_demo(token) or not is_instance_valid(tile):
-		duck_requested.emit(false)
-		return
-	tile.play_grade("PERFECT", "0.00", HelpScreen.RESULT_HOLD_SEC, "x2")
-	await get_tree().create_timer(HelpScreen.RESULT_HOLD_SEC, true, false, true).timeout
-	duck_requested.emit(false)
-	_end_type_demo(tile, token)
-
-func _play_blackout_demo(tile: HelpDemoTile, token: int) -> void:
-	duck_requested.emit(true)
-	_dim_page1_except([tile])
-	tile.set_selected(true)
-	var stop := _random_perfect_stop()
-	await tile.play_countdown(HelpScreen.BLACKOUT_START, stop, HelpScreen.BLACKOUT_THRESHOLD)
-	if not _still_demo(token) or not is_instance_valid(tile):
-		duck_requested.emit(false)
-		return
-	tile.play_grade("PERFECT", "%.2f" % stop, HelpScreen.RESULT_HOLD_SEC, "x2.5")
-	await get_tree().create_timer(HelpScreen.RESULT_HOLD_SEC, true, false, true).timeout
-	duck_requested.emit(false)
-	_end_type_demo(tile, token)
-
-func _play_decay_demo(tile: HelpDemoTile, token: int) -> void:
-	duck_requested.emit(true)
-	_dim_page1_except([tile])
-	tile.set_selected(true)
-	await tile.play_decay_climb(HelpScreen.DECAY_PERFECT_END, HelpScreen.DECAY_GOOD_END,
-		HelpScreen.DECAY_OKAY_END, HelpScreen.DECAY_MISS_END)
-	if not _still_demo(token) or not is_instance_valid(tile):
-		duck_requested.emit(false)
-		return
-	tile.play_grade("MISS", "%.2f" % HelpScreen.DECAY_MISS_END, HelpScreen.RESULT_HOLD_SEC)
-	await get_tree().create_timer(HelpScreen.RESULT_HOLD_SEC, true, false, true).timeout
-	duck_requested.emit(false)
-	_end_type_demo(tile, token)
-
-func _play_red_demo(tile: HelpDemoTile, token: int) -> void:
-	duck_requested.emit(true)
-	var keep: Array = [tile] + _bystander_tiles
-	_dim_page1_except(keep)
-	tile.set_selected(true)
-	for b in _bystander_tiles:
-		b.set_present(true)
-	for i in range(_bystander_tiles.size()):
-		_run_bystander_speedup(_bystander_tiles[i], HelpScreen.BYSTANDER_STARTS[i], token)
-	await tile.play_countdown(HelpScreen.REACT_TILE_START, _random_perfect_stop())
-	if not _still_demo(token) or not is_instance_valid(tile):
-		duck_requested.emit(false)
-		return
-	tile.play_grade("PERFECT", "%.2f" % tile.value, HelpScreen.RESULT_HOLD_SEC)
-	for b in _bystander_tiles:
-		if is_instance_valid(b):
-			b.react_speedup_permanent()
-	await get_tree().create_timer(HelpScreen.RED_SETTLE_SEC, true, false, true).timeout
-	duck_requested.emit(false)
-	_end_type_demo(tile, token, keep)
-
-func _run_bystander_speedup(b: HelpDemoTile, start: float, token: int) -> void:
-	await b.play_countdown(start, _random_perfect_stop())
-	if not _still_demo(token) or not is_instance_valid(b):
-		return
-	b.play_grade("PERFECT", "%.2f" % b.value, HelpScreen.RESULT_HOLD_SEC, "x1.25")
-
-func _play_blue_demo(tile: HelpDemoTile, token: int) -> void:
-	duck_requested.emit(true)
-	var keep: Array = [tile] + _bystander_tiles
-	_dim_page1_except(keep)
-	tile.set_selected(true)
-	for b in _bystander_tiles:
-		b.set_present(true)
-	for i in range(_bystander_tiles.size()):
-		_run_bystander_plain(_bystander_tiles[i], HelpScreen.BYSTANDER_STARTS[i], token)
-	await tile.play_countdown(HelpScreen.REACT_TILE_START, _random_perfect_stop())
-	if not _still_demo(token) or not is_instance_valid(tile):
-		duck_requested.emit(false)
-		return
-	tile.play_grade("PERFECT", "%.2f" % tile.value, HelpScreen.RESULT_HOLD_SEC)
-	for b in _bystander_tiles:
-		if is_instance_valid(b):
-			b.react_freeze(HelpScreen.BLUE_FREEZE_SEC)
-	await get_tree().create_timer(HelpScreen.BLUE_SETTLE_SEC, true, false, true).timeout
-	duck_requested.emit(false)
-	_end_type_demo(tile, token, keep)
-
-func _run_bystander_plain(b: HelpDemoTile, start: float, token: int) -> void:
-	await b.play_countdown(start, _random_perfect_stop())
-	if not _still_demo(token) or not is_instance_valid(b):
-		return
-	b.play_grade("PERFECT", "%.2f" % b.value, HelpScreen.RESULT_HOLD_SEC)
-
-# Shared close: holds the resolved state a beat, then fades every dimmed tile
-# back and resets whichever tiles this sequence actually drove.
-func _end_type_demo(tile: HelpDemoTile, token: int, also: Array = []) -> void:
-	if not _still_demo(token) or not is_instance_valid(tile):
-		return
-	tile.set_selected(false)
-	await get_tree().create_timer(0.3, true, false, true).timeout
-	if not _still_demo(token):
-		return
-	_undim_page1()
-	tile.idle()
-	for t in also:
-		if t != tile and is_instance_valid(t):
-			t.idle()
-			if _bystander_tiles.has(t):
-				t.set_present(false)
-
 # --- Host API -------------------------------------------------------------
+
+# True when `global_pos` lands on a tile that currently has a live practice
+# run - meaning that tap IS that run's stop.
+#
+# Hosts need this because they see the release first: HelpScreen classifies
+# swipe-vs-tap in _input(), which runs ahead of any Control's _gui_input, and
+# its plain-tap branch cancels every running demo. Without this check that
+# cancel lands before the tile has been given the release, so the tile is idled
+# out from under its own stop - the tap then falls through to "start a demo"
+# and RESTARTS the timer the player was trying to stop, on the exact frame
+# their timing mattered.
+# Forwarded to every tile - see HelpDemoTile.suppress_taps. block_taps above
+# only stops a swipe from STARTING a demo; this is what stops one from resolving
+# a demo already running, which the tile owns itself and this component never
+# sees.
+func set_suppress_taps(on: bool) -> void:
+	for t in _type_tiles + _bystander_tiles:
+		if is_instance_valid(t):
+			t.suppress_taps = on
+
+func tap_lands_on_active_run(global_pos: Vector2) -> bool:
+	for t in _type_tiles + _bystander_tiles:
+		if is_instance_valid(t) and t.is_practice_run_active() \
+				and t.get_global_rect().has_point(global_pos):
+			return true
+	return false
 
 # Stops whatever demo is currently playing and resets every tile to idle -
 # call on close/leave/page-switch. Doesn't touch music-ducking or caption/
@@ -361,6 +386,14 @@ func _end_type_demo(tile: HelpDemoTile, token: int, also: Array = []) -> void:
 # of this.
 func cancel_demos() -> void:
 	_demo_token += 1
+	_stop_all_tiles()
+	_undim_page1()
+
+# Idles every tile this component owns, which is what actually halts an
+# in-flight run coroutine (via the tile's own _play_token) as opposed to merely
+# ending the loop that started it.
+func _stop_all_tiles() -> void:
+	_bystander_results.clear()
 	for t in _type_tiles:
 		if is_instance_valid(t):
 			t.idle()
@@ -368,4 +401,3 @@ func cancel_demos() -> void:
 		if is_instance_valid(b):
 			b.idle()
 			b.set_present(false)
-	_undim_page1()

@@ -130,7 +130,7 @@ func _still_powerup_demo(token: int) -> bool:
 # A fresh random landing point inside the real PERFECT window every time a demo
 # auto-clicks, instead of a single fixed distance every run.
 func _random_perfect_stop() -> float:
-	return randf_range(0.0, TimerSlot.PERFECT_MAX)
+	return randf_range(0.0, ScoreManager.perfect_max)
 
 # The duck count itself now lives on AudioManager (see its own
 # duck_music()/refresh_music_mute() comments) rather than here - HelpScreen
@@ -352,7 +352,9 @@ func _cancel_all_demos() -> void:
 			p.set_present(false)
 	_undim_powerup_buttons()
 
-const PAGE_TITLES := ["TIMER TYPES", "POWERUPS"]
+# "TIMERS", not "TIMER TYPES" - moved in lockstep with HelpScreen's own tab
+# and the GDD, so all three names for this page still agree.
+const PAGE_TITLES := ["TIMERS", "POWERUPS"]
 
 func _on_page_changed(index: int) -> void:
 	_cancel_all_demos()

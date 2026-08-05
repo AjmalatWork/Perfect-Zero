@@ -1,11 +1,16 @@
 extends Panel
 class_name TimerSlot
 
-# Grade windows by absolute distance from true 0.00.
-const PERFECT_MAX := 0.05
-const GOOD_MAX := 0.30
-const OKAY_MAX := 0.50
-const MISS_MAX := 1.00       # beyond this a manual stop is a FAIL (ends the stage)
+# Grade windows by absolute distance from true 0.00 used to be four consts here.
+# They are @export vars on ScoreManager now (perfect_max/good_max/okay_max/
+# miss_max) so a designer can retune them from the Inspector - see the export
+# block there. Deliberately MOVED rather than mirrored: leaving a const copy
+# behind would mean the Inspector retuned the Help screen's zone bar while the
+# board carried on grading by the old numbers.
+#
+# EXPIRE_THRESHOLD stays here and stays a const - it is not a grade window but a
+# timer-lifecycle bound (how far past zero a slot runs before it gives up), and
+# it belongs to the slot rather than to scoring.
 const EXPIRE_THRESHOLD := -1.00
 
 # Neon accent per timer type. The panel fill is a very dark tint of this, with
@@ -586,7 +591,7 @@ func _resolve_stop(forced_grade: String, from_click: bool) -> void:
 	# force_resolve() or an expiry's own forced grade.
 	if from_click and forced_grade == "" and OS.is_debug_build() and Settings.dev_force_grade != "":
 		grade = Settings.dev_force_grade
-		distance = 0.0 if grade == "PERFECT" else GOOD_MAX
+		distance = 0.0 if grade == "PERFECT" else ScoreManager.good_max
 
 	# Shield downgrades the first FAIL inside its window to a MISS. Filtering
 	# here - ahead of the flash, the grade sign and the EventBus emit - means the
@@ -624,7 +629,7 @@ func _stop_distance() -> float:
 	# curve (and therefore the same points formula) as every other type.
 	if _is_decay():
 		return clampf(current_time / maxf(data.decay_miss_end(), 0.0001), 0.0, 1.0)
-	return snappedf(absf(current_time), 0.01)
+	return stop_distance_for(current_time)
 
 # Fire-and-forget: holds the slot fully visible, fades it out, then signals
 # faded_out. Campaign doesn't listen for this (it frees every slot at once
@@ -740,6 +745,40 @@ func _play_shine() -> void:
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	tween.tween_callback(clip.queue_free)
 
+# The global distance->grade windows, with no dependence on any instance state,
+# so the Help screen's practice tiles can grade a real tap against the exact
+# same boundaries without instancing a TimerSlot - which would drag EventBus,
+# ScoreManager and AudioManager's tick-urgency registry in with it, the whole
+# reason HelpDemoTile exists as a separate cosmetic replica in the first place.
+# Sharing the function rather than the four constants is what stops the Help
+# screen's idea of PERFECT from drifting away from the board's.
+#
+# GOLDEN and DECAY are deliberately NOT handled here: neither grades off a
+# distance at all (GOLDEN is unconditionally PERFECT, DECAY reads its own tier
+# windows off TimerData), so folding them in would mean taking a type and a
+# TimerData as well and inventing a second grading entry point. Callers that
+# can produce those types special-case them ahead of this, exactly as
+# _grade_for_distance() below does.
+#
+# <= at every tier: the upper bound belongs to the stricter grade, so an
+# exact 0.05 is PERFECT, not GOOD; an exact 0.30 is GOOD, not OKAY; etc. That
+# rule, and the four windows it compares against, now live on ScoreManager -
+# this stays the entry point every caller already uses, and delegates.
+#
+# Reaching an autoload from a `static func` is legal in GDScript (verified
+# headlessly on 4.7.1, not assumed) - which is what let the windows move to an
+# Inspector-editable autoload without forcing every static caller of this to
+# become an instance call.
+static func grade_for_distance(distance: float) -> String:
+	return ScoreManager.grade_for(distance)
+
+# Rounded to the same 2 decimal places the digit display shows - see
+# _stop_distance()'s own comment for why that rounding is load-bearing rather
+# than cosmetic. Static for the same sharing reason as grade_for_distance():
+# the rounding rule and the boundary checks only agree if both sides use both.
+static func stop_distance_for(displayed_value: float) -> float:
+	return snappedf(absf(displayed_value), 0.01)
+
 # distance must already be rounded to 2 decimals (see stop()) so the boundary
 # checks below agree with the displayed digits.
 func _grade_for_distance(distance: float) -> String:
@@ -754,17 +793,7 @@ func _grade_for_distance(distance: float) -> String:
 	if _is_decay():
 		return DECAY_TIER_GRADES[_decay_tier(current_time)]
 
-	# <= at every tier: the upper bound belongs to the stricter grade, so an
-	# exact 0.05 is PERFECT, not GOOD; an exact 0.30 is GOOD, not OKAY; etc.
-	if distance <= PERFECT_MAX:
-		return "PERFECT"
-	elif distance <= GOOD_MAX:
-		return "GOOD"
-	elif distance <= OKAY_MAX:
-		return "OKAY"
-	elif distance <= MISS_MAX:
-		return "MISS"
-	return "FAIL"  # too early / too late - StageController ends the stage
+	return grade_for_distance(distance)
 
 func _play_stop_flash(grade: String) -> void:
 	var flash_tween := create_tween()

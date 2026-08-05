@@ -70,14 +70,14 @@ const POWERUP_BUTTON_SIZE := Vector2(150, 92)
 #
 # 140 x 1.5 = 210 was sized against "POWERUPS", which measures 180 at the
 # portrait font size (Font.get_string_size, not estimated) plus 8 either side
-# from the button's own stylebox. Page 1's tab is now "TIMER TYPES" (renamed
-# from "TIMERS" to match both the GDD and the in-game Help bubble's own heading,
-# which already agreed with each other), and that string is the longest on the
-# row at roughly 251 units. Only that one tab grows: the row comes to about
-# 251 + 210 + 210 + two 15-unit separations = ~701 against the 820 available
-# inside this screen's 40-unit portrait side margins, so there is real slack
-# left. The tab row is still the widest fixed-width thing on this screen, so
-# over-reserving here is what squeezes those margins.
+# from the button's own stylebox. Page 1's tab was briefly "TIMER TYPES", the
+# longest string on the row at roughly 251 units and the only tab that had to
+# grow past this floor to fit; it is "TIMERS" again now that the page is a set
+# of timers to practise rather than a legend of types, which is comfortably
+# shorter than "POWERUPS". So the row is back to 3 x 210 + two 15-unit
+# separations = ~660 against the 820 available inside this screen's 40-unit
+# portrait side margins. The tab row is still the widest fixed-width thing on
+# this screen, so over-reserving here is what squeezes those margins.
 const TAB_SIZE := Vector2(140, 80)
 # Reserved so the description swapping between a one-line and a three-line
 # string can't reflow the page under the player's finger mid-read. 88 still
@@ -149,30 +149,7 @@ const DOT_SEPARATION := 12
 const SWIPE_TAP_SLOP := 14.0
 const SWIPE_COMMIT_RATIO := 0.18   # of page width
 
-# One baseline for every grade on the scoring page, so the five transitions are
-# directly comparable instead of each starting somewhere different.
-const DEMO_BASE_MULT := 2.0
 const GRADE_ORDER := ["PERFECT", "GOOD", "OKAY", "MISS", "FAIL"]
-
-# The real windows, read straight off TimerSlot's own thresholds rather than
-# transcribed, so this page cannot quietly disagree with what the board grades.
-# Each demo stops at a random point inside its grade's band and scores from that
-# actual distance - a fixed representative number per grade meant the digit on
-# the tile and the points beside it were only ever one example of the grade, and
-# always the same one.
-const GRADE_RANGES := {
-	"PERFECT": [0.0, TimerSlot.PERFECT_MAX],
-	"GOOD": [TimerSlot.PERFECT_MAX, TimerSlot.GOOD_MAX],
-	"OKAY": [TimerSlot.GOOD_MAX, TimerSlot.OKAY_MAX],
-	"MISS": [TimerSlot.OKAY_MAX, TimerSlot.MISS_MAX],
-	# Open-ended in the real rules; the upper bound here only bounds the demo.
-	"FAIL": [TimerSlot.MISS_MAX, TimerSlot.MISS_MAX + 0.5],
-}
-# Every grade demos from a real countdown now, so the number is arrived at rather
-# than asserted. FAIL has to start higher than the rest: it is by definition a
-# stop further than MISS_MAX from zero, which a 1.00 start can never reach.
-const SCORE_START := 1.0
-const SCORE_START_FAIL := 1.6
 
 # How long each demonstrated effect runs before the board returns to idle.
 const EFFECT_SEC := 2.0
@@ -186,30 +163,88 @@ const SHIELD_SAVED_SEC := 2.0
 # so it reads unambiguously as the FAIL it is rather than as a borderline MISS.
 const SHIELD_FAIL_DISTANCE := 1.25
 
-# --- Page 1 demo timing -------------------------------------------------------
-# Every value below is either a real game constant (cited per-line) or a
-# deliberately-picked demo number chosen for pacing, not derived from anything.
-const NORMAL_START := 3.0
-const GOLDEN_BLUR_SEC := 1.8
-const BLACKOUT_START := 3.0
+# --- Page 1 timing ------------------------------------------------------------
+# Page 1 is practised rather than watched now (see the practice block below), so
+# the starts/settle-times that only paced a scripted animation are gone with the
+# demos that used them - NORMAL_START, GOLDEN_BLUR_SEC, BLACKOUT_START, the
+# compressed DECAY_* windows, BYSTANDER_STARTS and RED/BLUE_SETTLE_SEC. What
+# survives here is what practice mode still genuinely needs, plus the two values
+# pages 2/3 share.
+#
+# TutorialManager keeps its own same-named copies of the removed ones on
+# purpose: Arcade's tutorial popups are still scripted demonstrations, and they
+# were never reading these.
 const BLACKOUT_THRESHOLD := 1.5   # TimerData.blackout_duration's real default
-# Real Decay windows are 0.6/1.8/3.6/6.0s cumulative (TimerData.decay_*_end()) -
-# compressed 2.5x here so the full climb doesn't drag, same proportions.
-const DECAY_PERFECT_END := 0.24
-const DECAY_GOOD_END := 0.72
-const DECAY_OKAY_END := 1.44
-const DECAY_MISS_END := 2.4
-const REACT_TILE_START := 1.2     # Red/Blue's own tile before it resolves
-const BYSTANDER_STARTS := [2.0, 2.6]
-const RED_SETTLE_SEC := 1.5       # how long the sped-up bystanders run before ending
+const REACT_TILE_START := 1.2     # page 2's Shield preview; also read by HelpBubble
 const BLUE_FREEZE_SEC := 1.0      # matches EndlessRunner's apply_pause(1.0) exactly
-const BLUE_SETTLE_SEC := 2.5
 
 # A fresh random landing point inside the real PERFECT window every time a demo
 # auto-clicks, instead of a single fixed 0.03 every run - the actual game never
 # lands on the exact same distance twice either.
 func _random_perfect_stop() -> float:
-	return randf_range(0.0, TimerSlot.PERFECT_MAX)
+	return randf_range(0.0, ScoreManager.perfect_max)
+
+# --- Practice mode timings ----------------------------------------------------
+# Page 1's tiles are practised, not watched: every start below is what the
+# PLAYER gets to time, so these are deliberately longer and rounder than the
+# scripted-demo numbers above, which only had to read well as an animation.
+#
+# 4.00 for everything that counts down. Long enough to watch the urgency glow
+# come up and commit deliberately, rather than the 3.00 a scripted demo used
+# where nobody had to react at all.
+const PRACTICE_START := 4.0
+
+# Red and Blue's bystanders. Deliberately longer than the 4.00 of the tile that
+# acts on them, so they are still running when the reaction lands and the player
+# can actually see it hit - a bystander that had already resolved would show
+# nothing. Staggered so the two don't resolve as one event.
+const PRACTICE_BYSTANDER_STARTS := [6.0, 8.0]
+
+# Decay climbs 0.00 -> 4.00. The tier boundaries keep the REAL windows'
+# proportions (TimerData's 0.6/1.8/3.6/6.0 cumulative, i.e. 1/10, 3/10, 6/10 of
+# the ceiling) rather than being picked by eye, so practising Decay's timing
+# here trains the same shape of judgement the board asks for - only the total
+# length differs.
+const PRACTICE_DECAY_PERFECT_END := 0.4
+const PRACTICE_DECAY_GOOD_END := 1.2
+const PRACTICE_DECAY_OKAY_END := 2.4
+const PRACTICE_DECAY_MISS_END := 4.0
+
+# --- Practice mode replay pacing ----------------------------------------------
+# How long a resolved practice timer holds its grade before starting over. Two
+# separate values because the two endings need different beats: a stop the
+# player earned gets a grade flash, a pop and a grade sign to read (see
+# HelpDemoTile.play_grade), while a timer that simply ran out has nothing to
+# admire and only needs long enough not to feel like it snapped back.
+#
+# @export rather than const, at the user's request, so both can be tuned by
+# feel from the Inspector on scenes/HelpScreen.tscn without a script edit and
+# reimport per attempt - the same reasoning as
+# AudioManager.menu_music_first_play_start_sec. This screen is one of the few
+# in the project with a real .tscn behind it, which is what makes that possible
+# here; TimerTypesLegend is built with .new() and so takes these as plain
+# host-assigned vars instead (see _build_page_types).
+@export var practice_replay_delay_after_stop: float = 2.0
+@export var practice_replay_delay_after_expire: float = 2.0
+
+# --- Page 2: the powerup practice board ---------------------------------------
+# A permanently-running 2x2 of Normal timers for the powerups to actually act
+# on. Unlike page 1 - where tiles stay idle until tapped, so only one animation
+# runs at a time - this board has to already be live, because a powerup with
+# nothing to affect demonstrates nothing. All four are tappable, and the whole
+# board restarts together once every one of them has resolved, so a powerup is
+# always fired into a full board rather than whatever remnant survived the last
+# sweep.
+const PRACTICE_BOARD_STARTS := [4.0, 5.0, 6.0, 7.0]
+const PRACTICE_BOARD_COLUMNS := 2
+
+# The in-flow explanation panel, sitting between the board and the buttons
+# exactly as requested. Same styling idiom as page 1's anchored caption
+# (_caption_box) so the two read as one component; in flow rather than anchored
+# because there is a fixed slot for it here, and nothing to anchor it to.
+const POWERUP_CAPTION_PAD := 12.0
+const POWERUP_CAPTION_FONT := 20
+const POWERUP_CAPTION_LINES := 3
 
 # --- Page 2 demo timing --------------------------------------------------------
 const PREVIEW_STARTS := [1.9, 2.5, 3.1]
@@ -225,8 +260,6 @@ var _powerup_demo_token: int = 0
 
 func _still_powerup_demo(token: int) -> bool:
 	return token == _powerup_demo_token
-
-var _score_token: int = 0
 
 # --- Music ducking during a demo ---------------------------------------------
 # Reference-counted (not a plain bool) because two independent demos can
@@ -258,6 +291,28 @@ func _side_margin() -> int:
 	return 40 if Layout.is_portrait() else 80
 
 var _backdrop: ColorRect
+
+# --- Focus dim ----------------------------------------------------------------
+# A real full-canvas overlay, up for as long as a caption is. Everything the
+# player is not currently being shown sits under it; the tile being practised
+# and its caption are lifted over it by z_index (HelpDemoTile.FOCUS_Z_INDEX = 5
+# and _caption.z_index = 10 respectively, both above this rect's own 0).
+#
+# The per-tile fade in HelpDemoTile.set_dimmed() used to carry this alone, and
+# it only ever darkened the other TILES - the heading, the tab row, the page
+# dots and BACK all stayed at full brightness, so "the rest of the screen"
+# was never actually dimmed. That fade stays (it separates the other tiles from
+# the focused one INSIDE the lit area) and this sits over the rest.
+#
+# MOUSE_FILTER_IGNORE, deliberately: dismissal is already owned by _end_drag's
+# tap-anywhere branch, and the tiles this covers are set MOUSE_FILTER_IGNORE by
+# their own set_dimmed(true) anyway. Making the rect itself STOP would put the
+# question of whether Godot's GUI picking honours z_index on the critical path
+# of the player being able to stop the tile they are looking at.
+const FOCUS_DIM_COLOR := Color(0.0, 0.0, 0.0, 0.72)
+const FOCUS_DIM_FADE := 0.18
+var _focus_dim: ColorRect
+var _focus_dim_tween: Tween
 var _margin: MarginContainer
 var _built_portrait: bool = false
 
@@ -275,6 +330,16 @@ var _track_tween: Tween
 var _drag_from: Vector2 = Vector2.ZERO
 var _dragging: bool = false
 var _swipe_active: bool = false
+# Page 3's slider is a horizontal drag control living inside a horizontally
+# swiped strip - the two gestures are the same gesture. Latched on press when
+# the finger comes down on the slider, and while it is set this screen does no
+# paging at all, so dragging the knob adjusts the value instead of throwing the
+# player onto page 2. Cleared on release.
+#
+# Needed even though NeonSlider calls accept_event(): _input() runs ahead of
+# every Control's _gui_input(), so the swipe would already have been classified
+# and the track already moving by the time the slider ever sees the drag.
+var _slider_grabbed: bool = false
 
 # Keyed by page index rather than a flat array: page 1 no longer registers one
 # (it uses the anchored caption instead), and an array would silently shift
@@ -288,16 +353,57 @@ var _caption_tile: HelpDemoTile
 var _caption_token: int = 0
 var _types_legend: TimerTypesLegend            # page 1, shared with HelpBubble
 var _powerup_tiles: Array[HelpDemoTile] = []   # page 2, react to the three powerups
-var _powerup_buttons: Array[Button] = []
+# PowerupBar.PowerupButton (a Control), not this screen's old Button stand-ins.
+var _powerup_buttons: Array = []
+var _powerup_caption: Panel
+var _powerup_caption_label: Label
+var _practice_board_running: bool = false
+var _practice_board_results: Dictionary = {}
+# --- Page 3: scoring ----------------------------------------------------------
 var _grade_buttons: Array[Button] = []
-var _score_tile: HelpDemoTile
-var _score_readout: Label
+var _score_slider: OptionsPanel.NeonSlider
+var _zone_bar: ScoreZoneBar
+var _score_value_label: Label
+var _score_grade_label: Label
+var _score_points_label: Label
+var _ledger_row: HBoxContainer
+var _mult_label: Label
+var _chain_grades: Array[String] = []
+var _chain_mult: float = 1.0
 
 func _ready() -> void:
 	_build()
 	Layout.changed.connect(_apply_canvas)
 	GameManager.state_changed.connect(_on_game_state_changed)
+	# The practice buttons fire real activations themselves, so the page learns
+	# what happened from Powerups rather than from its own button handlers -
+	# which also means the A/S/D keyboard shortcuts reach the practice board on
+	# desktop for free, exactly as they reach the real one.
+	Powerups.state_changed.connect(_on_powerups_state_changed)
+	Powerups.clear_all_fired.connect(_on_practice_nuke_fired)
+	Powerups.shield_armed.connect(_on_powerup_activated.bind(PowerupSystem.Kind.SHIELD))
+	Powerups.clear_all_fired.connect(_on_powerup_activated.bind(PowerupSystem.Kind.CLEAR_ALL))
+	Powerups.overclock_started.connect(_on_powerup_activated.bind(PowerupSystem.Kind.OVERCLOCK))
+	Powerups.shield_absorbed.connect(_on_practice_shield_absorbed)
 	_apply_canvas()
+
+func _on_powerups_state_changed() -> void:
+	for b in _powerup_buttons:
+		if is_instance_valid(b):
+			b.refresh()
+
+func _on_practice_shield_absorbed(_origin: Vector2) -> void:
+	for b in _powerup_buttons:
+		if is_instance_valid(b) and b.kind == PowerupSystem.Kind.SHIELD:
+			b.play_absorb_flash()
+
+# Points the activation effects at THIS page's buttons. See PowerupBar._ready()
+# for the other half of this - the origins are a single global slot per kind, so
+# whichever bar is actually on screen has to claim them.
+func _register_practice_button_origins() -> void:
+	for b in _powerup_buttons:
+		if is_instance_valid(b):
+			Powerups.register_button_origin(b.kind, b.global_position + b.size * 0.5)
 
 # Screens in this game stay in the tree with only `visible` toggled (see
 # MainScreenRouter), so leaving HELP was never actually stopping anything - a
@@ -317,29 +423,39 @@ func _on_game_state_changed(new_state: int) -> void:
 		# transition here would be seen mid-appearance rather than as a real page
 		# change.
 		_show_page(0, false)
+		# Real activations with no run-state cost - see
+		# Powerups.set_practice_mode(). Refused outright if a run were somehow
+		# armed, so this can never reach into live charges.
+		Powerups.set_practice_mode(true)
 		return
 	_cancel_all_demos()
+	Powerups.set_practice_mode(false)
 
 # Stops every in-flight type/powerup/scoring demo and its caption, resetting
 # every tile touched back to idle - shared between leaving the screen entirely
 # (state_changed, below) and tapping anywhere on it mid-demo (_end_drag()),
 # since both need exactly the same reset.
-func _cancel_all_demos() -> void:
-	_powerup_demo_token += 1
-	_score_token += 1
+#
+# `stop_board` is false for the tap-anywhere path. The powerups board is
+# permanently running by design, so a tap on empty space there must not tear it
+# down the way it tears down a page-1 demo - that would make the page stop
+# working the first time the player's finger missed a tile.
+func _cancel_all_demos(stop_board: bool = true) -> void:
 	_force_unduck_music()
 	AudioManager.stop_all_sfx()
 	if _types_legend != null:
 		_types_legend.cancel_demos()
-	for p in _powerup_tiles:
-		if is_instance_valid(p):
-			p.idle()
-			p.set_present(false)
-	if _score_tile != null and is_instance_valid(_score_tile):
-		_score_tile.idle()
-		_score_tile.set_present(false)
+	if stop_board:
+		_stop_practice_board()
+		for p in _powerup_tiles:
+			if is_instance_valid(p):
+				p.set_present(false)
+	# Nothing to cancel on page 3 any more: the slider and the multiplier chain
+	# are both plain state the player drives directly, with no coroutine, tween
+	# or token behind either. That is also why neither is reset here - a tap
+	# elsewhere on the screen is not a reason to throw away the chain the player
+	# has been building, and the chain has its own RESET button for when it is.
 	_hide_caption()
-	_undim_powerup_buttons()
 
 # A plain resize is a re-measure; an orientation change rebuilds, because the
 # portrait scale feeds every font size and a Label's is fixed once created.
@@ -358,11 +474,17 @@ func _rebuild() -> void:
 		remove_child(child)
 		child.queue_free()
 	_backdrop = null
+	_focus_dim = null
 	_margin = null
 	_page_area = null
 	_track = null
-	_score_tile = null
-	_score_readout = null
+	_score_slider = null
+	_zone_bar = null
+	_score_value_label = null
+	_score_grade_label = null
+	_score_points_label = null
+	_ledger_row = null
+	_mult_label = null
 	# Every one of these holds references into the tree being freed above. A
 	# rebuild that left them populated would have the handlers below writing to
 	# freed nodes (a silent no-op) instead of the new ones - the same class of
@@ -379,11 +501,16 @@ func _rebuild() -> void:
 	_powerup_tiles.clear()
 	_powerup_buttons.clear()
 	_grade_buttons.clear()
+	# The ledger's chips are nodes in the tree being freed above, so the chain
+	# they display cannot survive an orientation flip - reset the model with
+	# them rather than leaving a multiplier on screen with no ledger behind it.
+	_chain_grades.clear()
+	_chain_mult = ScoreManager.reset_multiplier()
 	_build()
 	_apply_overscan()
 
 func _apply_overscan() -> void:
-	ScreenLayout.cover(_backdrop)
+	ScreenLayout.cover_all([_backdrop, _focus_dim])
 
 func _build() -> void:
 	_built_portrait = Layout.is_portrait()
@@ -406,6 +533,18 @@ func _build() -> void:
 	_margin.add_theme_constant_override("margin_top", _fs(20))
 	_margin.add_theme_constant_override("margin_bottom", _fs(20))
 	add_child(_margin)
+
+	# Added AFTER _margin and left at the default z_index 0, which is what puts
+	# it over the whole content tree: same z, later in the tree, so it draws
+	# last of the two. The focused tile (z 5) and the caption (z 10) then sort
+	# above it on z alone, regardless of sitting deeper in _margin's subtree.
+	_focus_dim = ColorRect.new()
+	_focus_dim.color = FOCUS_DIM_COLOR
+	_focus_dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_focus_dim.visible = false
+	_focus_dim.modulate.a = 0.0
+	add_child(_focus_dim)
+	ScreenLayout.cover(_focus_dim)
 
 	var outer := VBoxContainer.new()
 	outer.add_theme_constant_override("separation", _fs(14))
@@ -496,10 +635,12 @@ func _build_tab_row() -> Control:
 	row.add_theme_constant_override("separation", _fs(10))
 	for i in range(PAGE_COUNT):
 		var tab := Button.new()
-		# "TIMER TYPES", not "TIMERS" - the same page is called that by the GDD and
-		# by HelpBubble.PAGE_TITLES, so this was the only one of the three names
-		# for it that disagreed. See TAB_SIZE for the width this costs.
-		tab.text = ["TIMER TYPES", "POWERUPS", "SCORING"][i]
+		# "TIMERS", matching HelpBubble.PAGE_TITLES and the GDD - all three were
+		# moved together, so the three names for this page still agree. It was
+		# "TIMER TYPES" while the page was a legend of types to read about;
+		# the page is a set of timers to practise now, and the shorter name is
+		# also what buys back the tab-row width TAB_SIZE documents.
+		tab.text = ["TIMERS", "POWERUPS", "SCORING"][i]
 		tab.custom_minimum_size = TAB_SIZE * _s()
 		tab.add_theme_font_size_override("font_size", _fs(TAB_FONT_SIZE))
 		tab.add_theme_constant_override("outline_size", 4)
@@ -776,6 +917,27 @@ func _hide_caption() -> void:
 	if _caption != null and is_instance_valid(_caption):
 		_caption.visible = false
 		_caption.modulate.a = 0.0
+	# The dim's whole lifetime is the caption's: it comes up when a type is
+	# tapped and stays up - through the resolution, through every replay - until
+	# the player dismisses the explanation. Previously the focus treatment
+	# evaporated the moment the scripted demo finished, leaving the caption
+	# sitting on a fully-lit screen it was no longer focusing anything on.
+	_set_focus_dim(false)
+
+func _set_focus_dim(on: bool) -> void:
+	if _focus_dim == null or not is_instance_valid(_focus_dim):
+		return
+	if _focus_dim_tween != null and _focus_dim_tween.is_valid():
+		_focus_dim_tween.kill()
+	_focus_dim_tween = create_tween()
+	if on:
+		_focus_dim.visible = true
+		_focus_dim_tween.tween_property(_focus_dim, "modulate:a", 1.0, FOCUS_DIM_FADE)
+		return
+	_focus_dim_tween.tween_property(_focus_dim, "modulate:a", 0.0, FOCUS_DIM_FADE)
+	# Hidden as well as transparent, so a fully-faded rect can never sit in the
+	# tree still answering a hit test on some future refactor.
+	_focus_dim_tween.tween_callback(_focus_dim.set_visible.bind(false))
 
 # --- Page 1: timer types ------------------------------------------------------
 # Built from TimerTypesLegend, the shared component the in-game HelpBubble's
@@ -787,6 +949,18 @@ func _build_page_types() -> Control:
 	_types_legend = TimerTypesLegend.new()
 	_types_legend.type_tapped.connect(_on_legend_type_tapped)
 	_types_legend.duck_requested.connect(_duck_music)
+	# Pushed in rather than read back out of HelpScreen the way the legend reads
+	# its sizing/timing consts: those are `const` and so reachable statically off
+	# the class, but these two are @export instance vars (Inspector-tunable, see
+	# their declaration) and the legend holds no reference to its host. HelpBubble
+	# builds the same component without setting these and keeps the defaults.
+	_types_legend.replay_delay_after_stop = practice_replay_delay_after_stop
+	_types_legend.replay_delay_after_expire = practice_replay_delay_after_expire
+	# This screen's focus dim is a sibling of the whole content tree, so the
+	# tile being practised has to be lifted over it - see the const block on
+	# _focus_dim, and TimerTypesLegend.lift_focused_tiles for why HelpBubble
+	# does not do this.
+	_types_legend.lift_focused_tiles = true
 	_types_legend.build()
 
 	# Portrait binds the description to the tapped tile via the anchored
@@ -805,6 +979,11 @@ func _build_page_types() -> Control:
 # anchored overlay caption and landscape's in-flow label are real per-screen
 # differences, not something worth forcing into the shared component.
 func _on_legend_type_tapped(tile: HelpDemoTile, text: String, accent: Color) -> void:
+	# Raised in both orientations. Landscape shows its description in flow
+	# rather than in an anchored panel, but the reason for the dim is the same
+	# in both: one tile is being practised and the rest of the screen is not
+	# what the player is looking at.
+	_set_focus_dim(true)
 	if Layout.is_portrait():
 		_show_caption(tile, text, accent)
 	else:
@@ -812,9 +991,13 @@ func _on_legend_type_tapped(tile: HelpDemoTile, text: String, accent: Color) -> 
 
 # --- Page 2: powerups ---------------------------------------------------------
 
+# Board on top, explanation in the middle, buttons at the bottom - the order
+# asked for, and the one that puts the buttons in easy thumb reach with the
+# thing they act on above them, matching how the real board is laid out in
+# portrait.
 func _build_page_powerups() -> Control:
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", _fs(12))
+	col.add_theme_constant_override("separation", _fs(10))
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 
 	var label := Label.new()
@@ -824,9 +1007,31 @@ func _build_page_powerups() -> Control:
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(label)
 
+	var grid := GridContainer.new()
+	grid.columns = PRACTICE_BOARD_COLUMNS
+	grid.add_theme_constant_override("h_separation", _fs(12))
+	grid.add_theme_constant_override("v_separation", _fs(12))
+	for i in range(PRACTICE_BOARD_STARTS.size()):
+		var tile := _make_tile(TimerData.TimerType.NORMAL, "")
+		# Real taps, real grades, and real powerup effects - see
+		# HelpDemoTile.live_powerups. Safe because the page only ever runs while
+		# Powerups.set_practice_mode() is on, which cannot engage during a run.
+		tile.live_powerups = true
+		_powerup_tiles.append(tile)
+		grid.add_child(tile)
+	var grid_wrap := CenterContainer.new()
+	grid_wrap.add_child(grid)
+	col.add_child(grid_wrap)
+
+	col.add_child(_build_powerup_caption())
+
+	# Real PowerupBar buttons at the real board's own size, rather than this
+	# screen's old 150x92 stand-ins - the page is teaching a control the player
+	# is about to use, so it should be the same object at the same size, with the
+	# same icon, cooldown ring and depletion bar.
 	var button_row := HBoxContainer.new()
 	button_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	button_row.add_theme_constant_override("separation", _fs(12))
+	button_row.add_theme_constant_override("separation", _fs(16))
 	for kind in PowerupSystem.ORDER:
 		var b := _make_powerup_button(kind)
 		_powerup_buttons.append(b)
@@ -834,237 +1039,257 @@ func _build_page_powerups() -> Control:
 	var button_wrap := CenterContainer.new()
 	button_wrap.add_child(button_row)
 	col.add_child(button_wrap)
-
-	# A three-timer stand-in for the board. Shield is the reason this row exists
-	# rather than a single tile: it is the one powerup that saves exactly one
-	# timer, and seeing the other two carry on untouched is what distinguishes it
-	# from Nuke and Overclock without needing a sentence to say so.
-	var demo_row := HBoxContainer.new()
-	demo_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	demo_row.add_theme_constant_override("separation", _fs(12))
-	for i in range(3):
-		var tile := _make_tile(TimerData.TimerType.NORMAL, "")
-		tile.interactive = false
-		_powerup_tiles.append(tile)
-		demo_row.add_child(tile)
-		# Nothing to demonstrate until a powerup is actually tapped.
-		tile.set_present(false)
-	var demo_wrap := CenterContainer.new()
-	demo_wrap.add_child(demo_row)
-	col.add_child(demo_wrap)
-
-	col.add_child(_make_desc_label(1, "Tap a powerup to see what it does."))
 	return col
 
-func _make_powerup_button(kind: int) -> Button:
-	var accent: Color = PowerupSystem.color_of(kind)
-	var button := Button.new()
-	button.custom_minimum_size = POWERUP_BUTTON_SIZE * _s()
-	button.add_theme_stylebox_override("normal", _box(accent, 0.85))
-	button.add_theme_stylebox_override("hover", _box(accent, 0.7))
-	button.add_theme_stylebox_override("pressed", _box(accent, 0.6))
-	PressFeedback.apply(button)
-	button.pressed.connect(_on_powerup_pressed.bind(kind))
+func _build_powerup_caption() -> Control:
+	_powerup_caption = Panel.new()
+	_powerup_caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_powerup_caption.add_theme_stylebox_override("panel", _caption_box(NEON))
+	# A fixed height for a fixed slot: the panel sits between two things that
+	# must not move, so it cannot be allowed to grow with whichever description
+	# happens to be showing. Sized off the real font metrics rather than guessed,
+	# the same measure-don't-assume the anchored caption arrived at the hard way
+	# (see _measured_caption_height).
+	var line_h: float = float(_fs(POWERUP_CAPTION_FONT)) * 1.35
+	_powerup_caption.custom_minimum_size = Vector2(0,
+		line_h * POWERUP_CAPTION_LINES + POWERUP_CAPTION_PAD * _s() * 2.0)
+	_powerup_caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	# The same drawn glyph the in-game buttons use, so the legend and the board
-	# can't drift apart. mouse_filter IGNORE on both children so neither steals
-	# the click meant for the Button underneath.
-	var icon := PowerupIcon.new(kind)
-	var icon_size: float = POWERUP_BUTTON_SIZE.y * _s() * 0.42
-	icon.size = Vector2(icon_size, icon_size)
-	icon.position = Vector2((POWERUP_BUTTON_SIZE.x * _s() - icon_size) * 0.5, POWERUP_BUTTON_SIZE.y * _s() * 0.12)
-	button.add_child(icon)
+	_powerup_caption_label = Label.new()
+	_powerup_caption_label.add_theme_font_size_override("font_size", _fs(POWERUP_CAPTION_FONT))
+	_powerup_caption_label.add_theme_color_override("font_color", TEXT_FILL)
+	_powerup_caption_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_powerup_caption_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_powerup_caption_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_powerup_caption_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_powerup_caption_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var pad: float = POWERUP_CAPTION_PAD * _s()
+	_powerup_caption_label.offset_left = pad
+	_powerup_caption_label.offset_top = pad
+	_powerup_caption_label.offset_right = -pad
+	_powerup_caption_label.offset_bottom = -pad
+	_powerup_caption_label.text = "Tap a powerup to fire it at the board above."
+	_powerup_caption.add_child(_powerup_caption_label)
+	return _powerup_caption
 
-	var name_label := Label.new()
-	name_label.text = PowerupSystem.name_of(kind)
-	name_label.add_theme_font_size_override("font_size", _fs(TILE_NAME_SIZE))
-	name_label.add_theme_color_override("font_color", accent)
-	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	name_label.position = Vector2(0, POWERUP_BUTTON_SIZE.y * _s() * 0.66)
-	name_label.size = Vector2(POWERUP_BUTTON_SIZE.x * _s(), POWERUP_BUTTON_SIZE.y * _s() * 0.28)
-	button.add_child(name_label)
-
+# A genuine PowerupBar.PowerupButton, not a lookalike: same drawn panel, icon,
+# name, cooldown ring and depletion bar, at the real board's own size for this
+# orientation. It also brings its own activation handling - its _gui_input calls
+# Powerups.activate(kind) directly - so there is no pressed handler to wire here.
+func _make_powerup_button(kind: int) -> Control:
+	var button := PowerupBar.PowerupButton.new()
+	# size before configure(): the button scales every internal measurement off
+	# its own height (see PowerupButton.BASE_HEIGHT), so it has to know it first.
+	button.size = _powerup_button_size()
+	button.custom_minimum_size = button.size
+	button.configure(kind)
 	return button
 
-func _on_powerup_pressed(kind: int) -> void:
-	if _swipe_active:
+# The real board's own button footprint, so the control the player practises on
+# is the size of the one they will actually reach for.
+func _powerup_button_size() -> Vector2:
+	return PowerupBar.PORTRAIT_BUTTON_SIZE if Layout.is_portrait() \
+		else PowerupBar.LANDSCAPE_BUTTON_SIZE
+
+# The buttons activate themselves, so this only has to keep the page's own
+# furniture in step: name the powerup in the caption, and re-point the effect
+# origins at THESE buttons rather than wherever a real board last registered.
+func _on_powerup_activated(kind: int) -> void:
+	_register_practice_button_origins()
+	if _powerup_caption_label != null and is_instance_valid(_powerup_caption_label):
+		_powerup_caption_label.text = "%s - %s  (%s)" % [PowerupSystem.name_of(kind),
+			Powerups.describe(kind), Powerups.cooldown_text(kind)]
+	if _powerup_caption != null and is_instance_valid(_powerup_caption):
+		_powerup_caption.add_theme_stylebox_override("panel",
+			_caption_box(PowerupSystem.color_of(kind)))
+
+# Nuke has no per-timer effect of its own to read off Powerups state - it fires
+# once and expects somebody to sweep the board - so this page has to do for its
+# practice board what EndlessRunner._run_nuke_cascade does for the real one.
+# Overclock and Shield need no equivalent: the tiles read timer_speed_scale()
+# and route their FAILs through filter_grade() themselves every frame (see
+# HelpDemoTile.live_powerups).
+func _on_practice_nuke_fired() -> void:
+	if _page_index != 1:
 		return
-	_powerup_demo_token += 1
-	var token := _powerup_demo_token
-	var accent: Color = PowerupSystem.color_of(kind)
-	_set_desc(1, "%s - %s  (%s)" % [PowerupSystem.name_of(kind),
-		Powerups.describe(kind), Powerups.cooldown_text(kind)], accent)
-	_dim_powerup_buttons_except(kind)
-	# The same activation cue the real board plays the instant a powerup button
-	# is pressed - AudioManager only, no Powerups.activate() call, so nothing
-	# about cooldowns/charges is touched.
-	AudioManager.play_powerup_activate(kind)
-
-	match kind:
-		PowerupSystem.Kind.CLEAR_ALL:
-			_play_nuke_demo(token)
-		PowerupSystem.Kind.OVERCLOCK:
-			_play_overclock_demo(token)
-		PowerupSystem.Kind.SHIELD:
-			_play_shield_demo(token)
-
-func _dim_powerup_buttons_except(kind: int) -> void:
-	for i in range(_powerup_buttons.size()):
-		var on: bool = PowerupSystem.ORDER[i] != kind
-		var button := _powerup_buttons[i]
-		var tween := create_tween()
-		tween.tween_property(button, "modulate:a", 0.25 if on else 1.0, 0.18)
-		button.disabled = on
-
-func _undim_powerup_buttons() -> void:
-	for button in _powerup_buttons:
-		var tween := create_tween()
-		tween.tween_property(button, "modulate:a", 1.0, 0.18)
-		button.disabled = false
-
-# Nuke's real effect is instant and forces whatever value each timer happens to
-# be showing at that moment - so the three preview tiles are left running for
-# NUKE_RUN_SEC first, their live values captured, then their own countdown
-# loops are cancelled (cancel_playback()) before play_grade freezes them there.
-# Without the cancel, each tile's still-running play_countdown would keep
-# overwriting the frozen digit out from under the grade sign a frame later.
-func _play_nuke_demo(token: int) -> void:
-	_duck_music(true)
-	for i in range(_powerup_tiles.size()):
-		_powerup_tiles[i].set_present(true)
-		_powerup_tiles[i].play_countdown(PREVIEW_STARTS[i], 0.0)
-	await get_tree().create_timer(NUKE_RUN_SEC, true, false, true).timeout
-	if not _still_powerup_demo(token):
-		_duck_music(false)
+	var live: Array[HelpDemoTile] = []
+	for t in _powerup_tiles:
+		if is_instance_valid(t) and t.is_practice_run_active():
+			live.append(t)
+	if live.is_empty():
 		return
-	# Every digit is frozen up front, then the resolutions are staggered - the
-	# same two beats the real Nuke has, where Juice.freeze_gameplay() stops the
-	# board and _run_nuke_cascade walks it. Capturing before the stagger is what
-	# makes the freeze real: resolving tile 3 two gaps later must show the value
-	# it held when the powerup landed, not one it kept counting down to since.
-	var total: int = _powerup_tiles.size()
-	var frozen: Array[String] = []
-	for tile in _powerup_tiles:
-		# Appended in both branches so frozen[i] stays aligned with tile i - the
-		# cascade below indexes them together.
-		if is_instance_valid(tile):
-			frozen.append("%.2f" % tile.value)
-			tile.cancel_playback()
-		else:
-			frozen.append("0.00")
-	# Same fixed total length the board uses, divided the same way, so the legend
-	# and the real cascade run at the same rhythm.
+	# Ordered by distance from the button that fired it, so the chain reads as
+	# spreading outward from where the player pressed - same ordering, and the
+	# same fixed total length, as the real cascade.
+	var origin: Vector2 = Powerups.button_origin(PowerupSystem.Kind.CLEAR_ALL)
+	live.sort_custom(func(a, b):
+		return a.get_global_rect().get_center().distance_to(origin) \
+			< b.get_global_rect().get_center().distance_to(origin))
+	_run_practice_nuke_cascade(live)
+
+func _run_practice_nuke_cascade(live: Array[HelpDemoTile]) -> void:
+	var total: int = live.size()
 	var gap: float = EndlessRunner.NUKE_CASCADE_SEC / float(maxi(total, 1))
+	var token := _powerup_demo_token
 	for i in range(total):
-		if not _still_powerup_demo(token):
-			_duck_music(false)
+		if token != _powerup_demo_token:
 			return
-		var t: HelpDemoTile = _powerup_tiles[i]
+		var t: HelpDemoTile = live[i]
 		if is_instance_valid(t):
-			t.play_grade("PERFECT", frozen[i], RESULT_HOLD_SEC)
+			# Every live timer cashes in at a flat PERFECT, exactly as
+			# TimerSlot.force_resolve("PERFECT") does under the real cascade.
+			t.force_resolve_practice("PERFECT")
 			AudioManager.play_nuke_note(i, total)
 		if i < total - 1:
 			await get_tree().create_timer(gap, true, false, true).timeout
-	await get_tree().create_timer(RESULT_HOLD_SEC, true, false, true).timeout
-	_duck_music(false)
-	_end_powerup_demo(token)
 
-# All three run at a visible baseline speed first (OVERCLOCK_LEAD_SEC) so the
-# boost reads as a change, not just "these were always fast" - then every tile
-# gets react_overclock, which (unlike Red's permanent bump) reverts on its own
-# once EFFECT_SEC elapses, matching the real powerup's timed duration.
-func _play_overclock_demo(token: int) -> void:
-	_duck_music(true)
-	for i in range(_powerup_tiles.size()):
-		_powerup_tiles[i].set_present(true)
-		_run_preview_countdown(_powerup_tiles[i], OVERCLOCK_STARTS[i], token)
-	await get_tree().create_timer(OVERCLOCK_LEAD_SEC, true, false, true).timeout
-	if not _still_powerup_demo(token):
-		_duck_music(false)
-		return
-	for tile in _powerup_tiles:
-		if is_instance_valid(tile):
-			tile.react_overclock(EFFECT_SEC)
-	await get_tree().create_timer(EFFECT_SEC + 2.0, true, false, true).timeout
-	_duck_music(false)
-	_end_powerup_demo(token)
-
-func _run_preview_countdown(tile: HelpDemoTile, start: float, token: int) -> void:
-	await tile.play_countdown(start, _random_perfect_stop())
-	if not _still_powerup_demo(token) or not is_instance_valid(tile):
-		return
-	tile.play_grade("PERFECT", "%.2f" % tile.value, RESULT_HOLD_SEC)
-
-# Shield acts on exactly one timer, and the demonstration is the asymmetry: the
-# other two preview tiles are dimmed out entirely (they never even start
-# running) while the first genuinely counts all the way out - a real FAIL,
-# caught a beat later and settled as a MISS. Only one timer is ever at risk,
-# which is the whole point Nuke and Overclock's demos (all three participate)
-# exist to contrast against.
+# The practice board: all four tiles live at once, restarting as a group.
 #
-# On the real board this conversion is invisible - Powerups.filter_grade()
-# runs before _play_stop_flash() ever fires, so a saved player only ever sees
-# the MISS. Showing the FAIL first anyway is deliberately more than the real
-# board renders: the whole point here is teaching what Shield prevented, not
-# reproducing the live feed frame-for-frame.
-func _play_shield_demo(token: int) -> void:
-	if _powerup_tiles.is_empty():
+# Deliberately unlike page 1, where tiles stay idle until tapped so only one
+# animation ever runs (see HelpDemoTile's header for why that rule exists). A
+# powerup fired at an idle board demonstrates nothing, so this one has to
+# already be running - and it restarts only once ALL four have resolved, so a
+# powerup always lands on a full board rather than on whatever survived the
+# previous sweep.
+func _start_practice_board() -> void:
+	if _powerup_tiles.is_empty() or _practice_board_running:
 		return
-	_duck_music(true)
-	# The other two never appear at all for this one - Shield only ever puts
-	# one timer at risk, unlike Nuke/Overclock which reveal all three.
-	var tile: HelpDemoTile = _powerup_tiles[0]
-	tile.set_present(true)
-	await tile.play_countdown(REACT_TILE_START, 0.0)
-	if not _still_powerup_demo(token) or not is_instance_valid(tile):
-		_duck_music(false)
-		return
-	# Nobody clicks it, so it overruns rather than stopping dead at zero. This is
-	# the part the demo used to get wrong: it froze at "0.00" and called that a
-	# FAIL, but 0.00 is the exact centre of the PERFECT window. A FAIL is a stop
-	# more than TimerSlot.MISS_MAX (1.00) from zero, which is only reachable by
-	# running past it.
-	await tile.play_overrun(SHIELD_FAIL_DISTANCE)
-	if not _still_powerup_demo(token) or not is_instance_valid(tile):
-		_duck_music(false)
-		return
-	var overrun := "%.2f" % SHIELD_FAIL_DISTANCE
-	tile.play_grade("FAIL", overrun, SHIELD_FAIL_SEC + SHIELD_SAVED_SEC)
-	await get_tree().create_timer(SHIELD_FAIL_SEC, true, false, true).timeout
-	if not _still_powerup_demo(token) or not is_instance_valid(tile):
-		_duck_music(false)
-		return
-	# The distance is unchanged by the save - Powerups.filter_grade() rewrites the
-	# grade and nothing else, so the digit stays exactly where it landed.
-	tile.play_grade("MISS", overrun, SHIELD_SAVED_SEC)
-	await get_tree().create_timer(SHIELD_SAVED_SEC, true, false, true).timeout
-	_duck_music(false)
-	_end_powerup_demo(token)
+	_practice_board_running = true
+	_powerup_demo_token += 1
+	_run_practice_board(_powerup_demo_token)
 
-func _end_powerup_demo(token: int) -> void:
-	if not _still_powerup_demo(token):
-		return
-	_undim_powerup_buttons()
-	for tile in _powerup_tiles:
-		if is_instance_valid(tile):
-			tile.set_dimmed(false)
-			tile.idle()
-			tile.set_present(false)
+func _stop_practice_board() -> void:
+	_practice_board_running = false
+	_powerup_demo_token += 1
+	_practice_board_results.clear()
+	for t in _powerup_tiles:
+		if is_instance_valid(t):
+			t.idle()
+
+func _run_practice_board(token: int) -> void:
+	_duck_music(true)
+	while _still_powerup_demo(token):
+		_practice_board_results.clear()
+		for i in range(_powerup_tiles.size()):
+			var tile: HelpDemoTile = _powerup_tiles[i]
+			if is_instance_valid(tile):
+				tile.set_present(true)
+				_run_practice_board_tile(tile, PRACTICE_BOARD_STARTS[i], token)
+		# The group beat: nothing restarts until every tile has finished, so a
+		# player still working the last timer never has it yanked away.
+		while _still_powerup_demo(token) 				and _practice_board_results.size() < _powerup_tiles.size():
+			await get_tree().process_frame
+		if not _still_powerup_demo(token):
+			break
+		# One shared pause for the whole board rather than per tile, since the
+		# board turns over as a unit. Which of the two it takes is decided by
+		# whether the player actually stopped anything - a board they cleared
+		# earned the post-stop beat; one that simply ran out gets the other.
+		var any_tapped := false
+		for t in _powerup_tiles:
+			if is_instance_valid(t) and t.last_run_was_tapped:
+				any_tapped = true
+		var delay: float = practice_replay_delay_after_stop if any_tapped 			else practice_replay_delay_after_expire
+		await get_tree().create_timer(delay, true, false, true).timeout
+	# Paired with the emit above and unconditional for the same reason the
+	# legend's own loop is: the duck is reference-counted, so a loop abandoned by
+	# a page switch still owes its decrement.
+	_duck_music(false)
+
+# Fire-and-forget wrapper - GDScript forbids capturing a coroutine handle to
+# await later, so each tile stashes its own result for the group check above.
+func _run_practice_board_tile(tile: HelpDemoTile, start: float, token: int) -> void:
+	var grade := await tile.run_tappable_countdown(start)
+	if _still_powerup_demo(token):
+		_practice_board_results[tile] = grade
+
 
 # --- Page 3: scoring ----------------------------------------------------------
 
+# Two live teaching tools rather than one canned demo: a slider the player
+# sweeps across zero to watch points fall off, and a chain of taps that builds
+# a multiplier the way a real run does.
+#
+# Nothing here is a re-implementation of scoring. The slider's grade comes from
+# TimerSlot.grade_for_distance(), its points from ScoreManager.base_points(),
+# and the chain's every step from ScoreManager.next_multiplier() /
+# reset_multiplier() - the same four functions the board itself runs on. All
+# read-only: this page never calls register_result(), resolve_stage() or
+# anything else that writes the real score model, so a player can sit on it for
+# ten minutes mid-session and their run state is untouched.
+
+# The FAIL overshoot shown past the MISS boundary at each end, as a fraction of
+# miss_max. Without it the bar would stop exactly where FAIL begins, which is
+# the one zone a player most needs to see the edge of.
+const SCORE_OVERSHOOT_RATIO := 0.25
+# 0.01, matching the two decimal places a timer actually displays (see
+# TimerSlot.stop_distance_for, which snaps to the same figure). A coarser step
+# would make the PERFECT window - 0.05 wide in total - unreachable except at its
+# exact endpoints.
+const SCORE_SNAP := 0.01
+const ZONE_BAR_HEIGHT := 26.0
+const ZONE_BAR_ALPHA := 0.75
+const READOUT_FONT_SIZE := 26
+# Fixed widths for the three readout fields. They change on every pixel of drag,
+# and a centred row of variable-width labels shuffles sideways as the digits
+# change - so each field reserves the width of its own widest possible value.
+const READOUT_VALUE_WIDTH := 150.0
+const READOUT_GRADE_WIDTH := 190.0
+const READOUT_POINTS_WIDTH := 170.0
+
+const LEDGER_CHIP_FONT := 16
+const LEDGER_HEIGHT := 52.0
+# Oldest chips fall off the end rather than wrapping to a second row. A ledger
+# that grows changes this page's height as the player taps, which on a page that
+# may already be scrolling would move everything under the finger mid-lesson.
+const LEDGER_MAX_CHIPS := 8
+
 func _build_page_scoring() -> Control:
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", _fs(12))
-	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.add_theme_constant_override("separation", _fs(10))
 
-	var label := Label.new()
-	label.text = "CLOSER TO 0.00 SCORES MORE"
-	label.add_theme_font_size_override("font_size", _fs(SECTION_LABEL_SIZE))
-	label.add_theme_color_override("font_color", MUTED)
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	col.add_child(label)
+	col.add_child(_section_label("CLOSER TO 0.00 SCORES MORE"))
+
+	# Zone bar and slider are deliberately adjacent with no separation: the bar
+	# is a legend FOR the track directly beneath it, and the two only read as one
+	# instrument if they touch.
+	_zone_bar = ScoreZoneBar.new()
+	_zone_bar.custom_minimum_size = Vector2(0, ZONE_BAR_HEIGHT * _s())
+	_zone_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_zone_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(_zone_bar)
+
+	_score_slider = OptionsPanel.NeonSlider.new()
+	# The touch-height variant in portrait: the track and knob keep their own
+	# dimensions and centre inside a 100-unit (60dp) tall hit box. Landscape is
+	# desktop with a mouse and keeps the compact 30.
+	_score_slider.scale_by(_s(), Layout.is_portrait())
+	_score_slider.set_range(-_score_span(), _score_span(), SCORE_SNAP)
+	# Centre, not either end - so the fill grows out from zero in whichever
+	# direction the player drags, which is the whole point being made.
+	_score_slider.fill_from = 0.0
+	_score_slider.value = 0.0
+	_score_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_score_slider.value_changed.connect(_on_score_slider_changed)
+	col.add_child(_score_slider)
+	_zone_bar.slider = _score_slider
+
+	col.add_child(_build_score_readout())
+
+	var hint := Label.new()
+	hint.text = "Drag across zero. Points fall away fast - and past the MISS edge a stop is a FAIL."
+	hint.add_theme_font_size_override("font_size", _fs(DESC_FONT_SIZE - 2))
+	hint.add_theme_color_override("font_color", MUTED)
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_child(hint)
+
+	var divider_wrap := CenterContainer.new()
+	divider_wrap.add_child(_make_divider())
+	col.add_child(divider_wrap)
+
+	col.add_child(_section_label("CONSECUTIVE STOPS BUILD A MULTIPLIER"))
 
 	var grid := GridContainer.new()
 	grid.columns = 3 if Layout.is_portrait() else 5
@@ -1078,29 +1303,118 @@ func _build_page_scoring() -> Control:
 	grid_wrap.add_child(grid)
 	col.add_child(grid_wrap)
 
-	var demo_row := HBoxContainer.new()
-	demo_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	demo_row.add_theme_constant_override("separation", _fs(24))
-	_score_tile = _make_tile(TimerData.TimerType.NORMAL, "")
-	_score_tile.interactive = false
-	demo_row.add_child(_score_tile)
-	# Nothing to demonstrate until a grade is actually tapped.
-	_score_tile.set_present(false)
+	col.add_child(_build_ledger())
 
-	_score_readout = Label.new()
-	_score_readout.add_theme_font_size_override("font_size", _fs(DESC_FONT_SIZE))
-	_score_readout.add_theme_color_override("font_color", TEXT_FILL)
-	_score_readout.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_score_readout.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_score_readout.custom_minimum_size = Vector2(300, 0) * _s()
-	demo_row.add_child(_score_readout)
+	_mult_label = Label.new()
+	_mult_label.add_theme_font_size_override("font_size", _fs(READOUT_FONT_SIZE + 6))
+	_mult_label.add_theme_color_override("font_color", GOLD)
+	_mult_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_mult_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_child(_mult_label)
 
-	var demo_wrap := CenterContainer.new()
-	demo_wrap.add_child(demo_row)
-	col.add_child(demo_wrap)
+	var reset := _button("RESET", MUTED)
+	# Same 96/64 split every BACK-class button on this screen takes - 96 raw is
+	# 144 canvas units in portrait (57.6dp), clearing the 56dp target.
+	reset.custom_minimum_size = Vector2(200, 96.0 if Layout.is_portrait() else 64.0) * _s()
+	reset.pressed.connect(_on_chain_reset)
+	var reset_wrap := CenterContainer.new()
+	reset_wrap.add_child(reset)
+	col.add_child(reset_wrap)
 
-	col.add_child(_make_desc_label(2, "Tap a grade to see it land."))
-	return col
+	_refresh_score_readout()
+	_refresh_chain()
+
+	# Scrolled, in both orientations. Measured, this page's content is taller
+	# than the viewport in portrait (see _size_page_area's note) and it is the
+	# one page with no fixed grid to preserve, so the brief's own fallback
+	# applies. A ScrollContainer also reports a near-zero minimum height, which
+	# is what keeps this page out of _size_page_area's tallest-page calculation
+	# entirely - a page 3 that measured its full content there would have
+	# inflated the shared _page_area reservation and pushed the dot row and BACK
+	# off the bottom of pages 1 and 2 as well.
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	# Otherwise a horizontal page-swipe that begins inside this page has to
+	# out-drag the scroll container's own deadzone before _input ever classifies
+	# it, which reads as the page briefly refusing to move.
+	scroll.scroll_deadzone = roundi(SWIPE_TAP_SLOP)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(col)
+	return scroll
+
+func _section_label(text: String) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", _fs(SECTION_LABEL_SIZE))
+	label.add_theme_color_override("font_color", MUTED)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return label
+
+# Half the slider's full travel: out to the MISS boundary plus a slice of FAIL
+# past it, at BOTH ends. Derived from the live threshold, never written down -
+# retuning miss_max in the Inspector rescales the slider and the zone bar
+# together the next time this screen is built.
+func _score_span() -> float:
+	return ScoreManager.miss_max * (1.0 + SCORE_OVERSHOOT_RATIO)
+
+func _build_score_readout() -> Control:
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", _fs(8))
+
+	_score_value_label = _readout_field(READOUT_VALUE_WIDTH, TEXT_FILL)
+	_score_grade_label = _readout_field(READOUT_GRADE_WIDTH, TEXT_FILL)
+	_score_points_label = _readout_field(READOUT_POINTS_WIDTH, TEXT_FILL)
+	row.add_child(_score_value_label)
+	row.add_child(_score_grade_label)
+	row.add_child(_score_points_label)
+
+	var wrap := CenterContainer.new()
+	wrap.add_child(row)
+	return wrap
+
+func _readout_field(width: float, color: Color) -> Label:
+	var label := Label.new()
+	label.add_theme_font_size_override("font_size", _fs(READOUT_FONT_SIZE))
+	label.add_theme_color_override("font_color", color)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.custom_minimum_size = Vector2(width, 0) * _s()
+	return label
+
+func _on_score_slider_changed(_v: float) -> void:
+	_refresh_score_readout()
+	if _zone_bar != null and is_instance_valid(_zone_bar):
+		_zone_bar.queue_redraw()
+
+# The three live fields. Every value here is asked of the real scoring code
+# rather than computed locally - grade_for_distance() is the board's own
+# grading entry point and base_points() is the real formula, so a retune to
+# either shows up here with no change to this function.
+func _refresh_score_readout() -> void:
+	if _score_slider == null or not is_instance_valid(_score_slider):
+		return
+	var signed_value: float = _score_slider.value
+	# Grading works on |distance| from zero; the sign only says which side of
+	# zero the stop landed on. Rounded through the same helper the board uses,
+	# so a value sitting exactly on a boundary grades the same way in both.
+	var distance: float = TimerSlot.stop_distance_for(signed_value)
+	var grade: String = TimerSlot.grade_for_distance(distance)
+	var points: int = ScoreManager.base_points(distance)
+	var color: Color = ScoreManager.grade_color(grade)
+
+	if _score_value_label != null:
+		_score_value_label.text = "%+.2f" % signed_value
+	if _score_grade_label != null:
+		_score_grade_label.text = grade
+		_score_grade_label.add_theme_color_override("font_color", color)
+	if _score_points_label != null:
+		_score_points_label.text = "%d pts" % points
+		_score_points_label.add_theme_color_override("font_color", color)
 
 func _make_grade_chip(grade: String) -> Button:
 	var color: Color = ScoreManager.grade_color(grade)
@@ -1118,63 +1432,115 @@ func _make_grade_chip(grade: String) -> Button:
 	chip.pressed.connect(_on_grade_pressed.bind(grade))
 	return chip
 
-# Points and the multiplier step are both computed from ScoreManager's own
-# static helpers rather than transcribed into a table here, so this page cannot
-# quietly disagree with real scoring if those formulas are ever retuned.
+func _build_ledger() -> Control:
+	_ledger_row = HBoxContainer.new()
+	_ledger_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_ledger_row.add_theme_constant_override("separation", _fs(6))
+	# Reserved whether or not there are any chips in it yet, so the first tap
+	# does not push the multiplier and RESET below it down the page.
+	_ledger_row.custom_minimum_size = Vector2(0, LEDGER_HEIGHT * _s())
+	_ledger_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return _ledger_row
+
+# Grade name only, in that grade's colour - no points, no per-stop delta. The
+# points half of scoring is what the slider above teaches; this half is the
+# multiplier rule on its own.
+func _make_ledger_chip(grade: String) -> Control:
+	var color: Color = ScoreManager.grade_color(grade)
+	var box := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(color.r, color.g, color.b, 0.18)
+	sb.set_corner_radius_all(8)
+	sb.set_border_width_all(2)
+	sb.border_color = color
+	sb.set_content_margin_all(roundi(6 * _s()))
+	box.add_theme_stylebox_override("panel", sb)
+	box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+
+	var label := Label.new()
+	label.text = grade
+	label.add_theme_font_size_override("font_size", _fs(LEDGER_CHIP_FONT))
+	label.add_theme_color_override("font_color", color)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	box.add_child(label)
+	return box
+
+# One tap = one stop, run through the real rule. FAIL is the one grade that
+# does not go through next_multiplier() - the real code resets outright in
+# register_result() rather than evolving, so this asks reset_multiplier() for
+# the same answer instead of writing a literal 1.0 that would ignore a retuned
+# floor.
 func _on_grade_pressed(grade: String) -> void:
 	if _swipe_active:
 		return
-	_score_token += 1
-	var token := _score_token
-	var color: Color = ScoreManager.grade_color(grade)
-	var span: Array = GRADE_RANGES[grade]
-	var dist: float = randf_range(span[0], span[1])
+	if grade == "FAIL":
+		_chain_mult = ScoreManager.reset_multiplier()
+	else:
+		_chain_mult = ScoreManager.next_multiplier(grade, _chain_mult)
+	_chain_grades.append(grade)
+	if _chain_grades.size() > LEDGER_MAX_CHIPS:
+		_chain_grades.remove_at(0)
+	_refresh_chain()
 
-	# The description states the window; the readout below states what this
-	# particular stop scored inside it.
-	var suffix := "  Ends the stage." if grade == "FAIL" else ""
-	_set_desc(2, "%s - %s%s" % [grade, _range_text(grade), suffix], color)
-
-	if _score_tile == null or not is_instance_valid(_score_tile):
+func _on_chain_reset() -> void:
+	if _swipe_active:
 		return
-	# Cleared while the timer is still running: the previous stop's points must
-	# not sit next to a digit that is currently counting toward a different one.
-	if _score_readout != null:
-		_score_readout.text = ""
-	_score_tile.set_present(true)
-	await _score_tile.play_countdown(
-		SCORE_START_FAIL if grade == "FAIL" else SCORE_START, dist)
-	if token != _score_token or not is_instance_valid(_score_tile):
-		return
+	_chain_grades.clear()
+	_chain_mult = ScoreManager.reset_multiplier()
+	_refresh_chain()
 
-	var points: int = ScoreManager.base_points(dist)
-	# next_multiplier() has no FAIL branch (it returns the multiplier unchanged),
-	# because register_result() handles that case by resetting to 1.0 outright -
-	# so FAIL is stated here rather than derived.
-	var after: float = 1.0 if grade == "FAIL" \
-		else ScoreManager.next_multiplier(grade, DEMO_BASE_MULT)
-	_score_tile.play_grade(grade, "%.2f" % dist, RESULT_HOLD_SEC * 2.0)
-	if _score_readout != null:
-		_score_readout.text = "stopped %.2f from zero\n%d points\nmultiplier  x%.1f  ->  x%.1f" \
-			% [dist, points, DEMO_BASE_MULT, after]
-		_score_readout.add_theme_color_override("font_color", color)
+func _refresh_chain() -> void:
+	if _ledger_row != null and is_instance_valid(_ledger_row):
+		for child in _ledger_row.get_children():
+			_ledger_row.remove_child(child)
+			child.queue_free()
+		for grade in _chain_grades:
+			_ledger_row.add_child(_make_ledger_chip(grade))
+	if _mult_label != null and is_instance_valid(_mult_label):
+		_mult_label.text = "x%.1f" % _chain_mult
 
-	await get_tree().create_timer(RESULT_HOLD_SEC * 2.0, true, false, true).timeout
-	if token != _score_token or _score_tile == null or not is_instance_valid(_score_tile):
-		return
-	_score_tile.set_present(false)
+# --- Zone bar -----------------------------------------------------------------
+# The coloured band strip above the slider. Draws itself from
+# ScoreManager.grade_windows() at paint time rather than from a cached band
+# list, so a threshold retuned in the Inspector is reflected the next time this
+# is drawn - there is no copy of the thresholds anywhere in here to go stale.
+#
+# Band geometry is taken from the slider it sits above (track_inset/ratio_of)
+# rather than from this control's own full width: the track is inset by the
+# knob radius at each end, so a bar drawn edge to edge would be offset from the
+# zones it is labelling by exactly that much at both ends.
+class ScoreZoneBar extends Control:
+	var slider: OptionsPanel.NeonSlider
 
-# PERFECT reads as a tolerance rather than a span (its lower bound is a dead-on
-# 0.00, which "0.00 to 0.05" makes look like a range you have to land inside
-# rather than the target itself), and FAIL is genuinely open-ended above MISS_MAX.
-func _range_text(grade: String) -> String:
-	var span: Array = GRADE_RANGES[grade]
-	match grade:
-		"PERFECT":
-			return "within %.2f of zero." % float(span[1])
-		"FAIL":
-			return "more than %.2f from zero." % float(span[0])
-	return "%.2f to %.2f from zero." % [float(span[0]), float(span[1])]
+	func _draw() -> void:
+		if slider == null or not is_instance_valid(slider):
+			return
+		var inset: float = slider.track_inset()
+		var usable: float = size.x - inset * 2.0
+		if usable <= 0.0:
+			return
+
+		var lo: float = 0.0
+		for window in ScoreManager.grade_windows():
+			_band(lo, window["max"], window["grade"], inset, usable)
+			lo = window["max"]
+		# The overshoot: everything past the MISS boundary out to the end of the
+		# slider's own range, which is FAIL territory on both sides.
+		_band(lo, slider.max_value, "FAIL", inset, usable)
+
+		# Zero tick, drawn last so it sits over the bands it divides.
+		var mid: float = inset + slider.ratio_of(0.0) * usable
+		draw_rect(Rect2(mid - 1.0, 0.0, 2.0, size.y), Color(1, 1, 1, 0.85), true)
+
+	# One tier, mirrored either side of zero.
+	func _band(from: float, to: float, grade: String, inset: float, usable: float) -> void:
+		var color: Color = ScoreManager.grade_color(grade)
+		color.a = HelpScreen.ZONE_BAR_ALPHA
+		for sign_mult in [1.0, -1.0]:
+			var a: float = inset + slider.ratio_of(from * sign_mult) * usable
+			var b: float = inset + slider.ratio_of(to * sign_mult) * usable
+			draw_rect(Rect2(minf(a, b), 0.0, absf(b - a), size.y), color, true)
 
 # --- Shared builders ----------------------------------------------------------
 
@@ -1325,6 +1691,13 @@ func _show_page(index: int, animate: bool) -> void:
 	# would hang over the incoming page instead of leaving with the tile it
 	# belongs to.
 	_hide_caption()
+	# The powerups board runs for exactly as long as its page is the one being
+	# looked at - it is "permanently running" in the sense of never waiting to be
+	# started, not in the sense of ticking away behind two other pages.
+	if _page_index == 1:
+		_start_practice_board()
+	else:
+		_stop_practice_board()
 	if _page_area == null or _track == null:
 		return
 	var target: float = -_page_area.size.x * float(_page_index)
@@ -1363,11 +1736,26 @@ func _begin_drag(pos: Vector2) -> void:
 	_drag_from = pos
 	_dragging = true
 	_swipe_active = false
+	_slider_grabbed = _page_index == 2 and _score_slider != null \
+		and is_instance_valid(_score_slider) \
+		and _score_slider.get_global_rect().has_point(pos)
+	_set_suppress_taps(false)
 	if _types_legend != null:
 		_types_legend.block_taps = false
 
+# Forwarded to every practice tile on the screen while a swipe is in progress -
+# see HelpDemoTile.suppress_taps. block_taps below only stops a swipe from
+# STARTING a demo; a run already in flight owns its own stop and would otherwise
+# be resolved by the release at the end of a drag that merely crossed it.
+func _set_suppress_taps(on: bool) -> void:
+	if _types_legend != null:
+		_types_legend.set_suppress_taps(on)
+	for t in _powerup_tiles:
+		if is_instance_valid(t):
+			t.suppress_taps = on
+
 func _update_drag(pos: Vector2) -> void:
-	if not _dragging:
+	if not _dragging or _slider_grabbed:
 		return
 	var dx: float = pos.x - _drag_from.x
 	if absf(dx) > SWIPE_TAP_SLOP:
@@ -1377,6 +1765,7 @@ func _update_drag(pos: Vector2) -> void:
 			# through the drag would have it sitting still over moving content.
 			_hide_caption()
 		_swipe_active = true
+		_set_suppress_taps(true)
 		if _types_legend != null:
 			_types_legend.block_taps = true
 	if _swipe_active:
@@ -1389,10 +1778,36 @@ func _update_drag(pos: Vector2) -> void:
 			or (_page_index == PAGE_COUNT - 1 and dx < 0.0)
 		_track.position.x = base + (dx * 0.35 if at_edge else dx)
 
+# Whether this release is a practice run's stop rather than a dismissal.
+func _tap_is_practice_stop(pos: Vector2) -> bool:
+	# The powerups board is permanently live, so any of its tiles under the
+	# finger is that tile's stop - same reasoning as the legend's own check.
+	if _page_index == 1:
+		for t in _powerup_tiles:
+			if is_instance_valid(t) and t.is_practice_run_active() \
+					and t.get_global_rect().has_point(pos):
+				return true
+		return false
+	if _types_legend == null or _page_index != 0:
+		return false
+	# The caption sits on top of the page and is dismissed by its own tap, so a
+	# finger there dismissed it - even in the overlap where the box happens to
+	# cover part of the tile it is anchored to.
+	if _caption != null and _caption.visible \
+			and _caption.get_global_rect().has_point(pos):
+		return false
+	return _types_legend.tap_lands_on_active_run(pos)
+
 func _end_drag(pos: Vector2) -> void:
 	if not _dragging:
 		return
 	_dragging = false
+	# The slider owns this whole gesture: no page change, and no tap-anywhere
+	# cancel either - a drag that ends on the knob is the player setting a
+	# value, not dismissing anything.
+	if _slider_grabbed:
+		_slider_grabbed = false
+		return
 	if not _swipe_active:
 		# A plain tap, not a swipe - anywhere on the screen. This runs in
 		# _input(), ahead of whatever Control is actually under the finger (a
@@ -1402,7 +1817,15 @@ func _end_drag(pos: Vector2) -> void:
 		# way - this only covers what used to be entirely unhandled: a tap on
 		# nothing interactive while some demo (or its leftover caption) is still
 		# running, which previously did nothing at all.
-		_cancel_all_demos()
+		#
+		# Except when the finger came down on a tile that is mid-practice-run:
+		# that tap is that run's STOP, and this branch fires before the tile has
+		# been handed the release (see the note above _input). Cancelling here
+		# would idle the tile out from under its own stop, and the release would
+		# then fall through to "start a demo" and restart the very timer the
+		# player was trying to stop, on the exact frame their timing mattered.
+		if not _tap_is_practice_stop(pos):
+			_cancel_all_demos(false)
 		return
 	var dx: float = pos.x - _drag_from.x
 	var commit: float = _page_area.size.x * SWIPE_COMMIT_RATIO
