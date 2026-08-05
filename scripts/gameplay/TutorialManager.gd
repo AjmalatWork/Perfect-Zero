@@ -245,7 +245,7 @@ func _still(token: int) -> bool:
 	return token == _demo_token
 
 func _random_perfect_stop() -> float:
-	return randf_range(0.0, TimerSlot.PERFECT_MAX)
+	return randf_range(0.0, ScoreManager.perfect_max)
 
 # Loops the demo for as long as the popup stays open, rather than playing
 # once and leaving the tile frozen on its last frame - see the call site's own

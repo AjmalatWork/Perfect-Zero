@@ -235,7 +235,7 @@ static func _make_tile() -> HelpDemoTile:
 # from outside, e.g. backing out of Endless Mode Select mid-animation) --------
 
 static func _random_perfect_stop() -> float:
-	return randf_range(0.0, TimerSlot.PERFECT_MAX)
+	return randf_range(0.0, ScoreManager.perfect_max)
 
 # Loops for as long as the popup stays open (checked via tiles[0]'s own
 # validity - the popup's CanvasLayer freeing its children is the only signal

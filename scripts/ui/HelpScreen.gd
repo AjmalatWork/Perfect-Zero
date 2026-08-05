@@ -149,30 +149,7 @@ const DOT_SEPARATION := 12
 const SWIPE_TAP_SLOP := 14.0
 const SWIPE_COMMIT_RATIO := 0.18   # of page width
 
-# One baseline for every grade on the scoring page, so the five transitions are
-# directly comparable instead of each starting somewhere different.
-const DEMO_BASE_MULT := 2.0
 const GRADE_ORDER := ["PERFECT", "GOOD", "OKAY", "MISS", "FAIL"]
-
-# The real windows, read straight off TimerSlot's own thresholds rather than
-# transcribed, so this page cannot quietly disagree with what the board grades.
-# Each demo stops at a random point inside its grade's band and scores from that
-# actual distance - a fixed representative number per grade meant the digit on
-# the tile and the points beside it were only ever one example of the grade, and
-# always the same one.
-const GRADE_RANGES := {
-	"PERFECT": [0.0, TimerSlot.PERFECT_MAX],
-	"GOOD": [TimerSlot.PERFECT_MAX, TimerSlot.GOOD_MAX],
-	"OKAY": [TimerSlot.GOOD_MAX, TimerSlot.OKAY_MAX],
-	"MISS": [TimerSlot.OKAY_MAX, TimerSlot.MISS_MAX],
-	# Open-ended in the real rules; the upper bound here only bounds the demo.
-	"FAIL": [TimerSlot.MISS_MAX, TimerSlot.MISS_MAX + 0.5],
-}
-# Every grade demos from a real countdown now, so the number is arrived at rather
-# than asserted. FAIL has to start higher than the rest: it is by definition a
-# stop further than MISS_MAX from zero, which a 1.00 start can never reach.
-const SCORE_START := 1.0
-const SCORE_START_FAIL := 1.6
 
 # How long each demonstrated effect runs before the board returns to idle.
 const EFFECT_SEC := 2.0
@@ -205,7 +182,7 @@ const BLUE_FREEZE_SEC := 1.0      # matches EndlessRunner's apply_pause(1.0) exa
 # auto-clicks, instead of a single fixed 0.03 every run - the actual game never
 # lands on the exact same distance twice either.
 func _random_perfect_stop() -> float:
-	return randf_range(0.0, TimerSlot.PERFECT_MAX)
+	return randf_range(0.0, ScoreManager.perfect_max)
 
 # --- Practice mode timings ----------------------------------------------------
 # Page 1's tiles are practised, not watched: every start below is what the
@@ -284,8 +261,6 @@ var _powerup_demo_token: int = 0
 func _still_powerup_demo(token: int) -> bool:
 	return token == _powerup_demo_token
 
-var _score_token: int = 0
-
 # --- Music ducking during a demo ---------------------------------------------
 # Reference-counted (not a plain bool) because two independent demos can
 # legitimately overlap - a page-1 sequence still finishing while the player has
@@ -355,6 +330,16 @@ var _track_tween: Tween
 var _drag_from: Vector2 = Vector2.ZERO
 var _dragging: bool = false
 var _swipe_active: bool = false
+# Page 3's slider is a horizontal drag control living inside a horizontally
+# swiped strip - the two gestures are the same gesture. Latched on press when
+# the finger comes down on the slider, and while it is set this screen does no
+# paging at all, so dragging the knob adjusts the value instead of throwing the
+# player onto page 2. Cleared on release.
+#
+# Needed even though NeonSlider calls accept_event(): _input() runs ahead of
+# every Control's _gui_input(), so the swipe would already have been classified
+# and the track already moving by the time the slider ever sees the drag.
+var _slider_grabbed: bool = false
 
 # Keyed by page index rather than a flat array: page 1 no longer registers one
 # (it uses the anchored caption instead), and an array would silently shift
@@ -374,9 +359,17 @@ var _powerup_caption: Panel
 var _powerup_caption_label: Label
 var _practice_board_running: bool = false
 var _practice_board_results: Dictionary = {}
+# --- Page 3: scoring ----------------------------------------------------------
 var _grade_buttons: Array[Button] = []
-var _score_tile: HelpDemoTile
-var _score_readout: Label
+var _score_slider: OptionsPanel.NeonSlider
+var _zone_bar: ScoreZoneBar
+var _score_value_label: Label
+var _score_grade_label: Label
+var _score_points_label: Label
+var _ledger_row: HBoxContainer
+var _mult_label: Label
+var _chain_grades: Array[String] = []
+var _chain_mult: float = 1.0
 
 func _ready() -> void:
 	_build()
@@ -448,7 +441,6 @@ func _on_game_state_changed(new_state: int) -> void:
 # down the way it tears down a page-1 demo - that would make the page stop
 # working the first time the player's finger missed a tile.
 func _cancel_all_demos(stop_board: bool = true) -> void:
-	_score_token += 1
 	_force_unduck_music()
 	AudioManager.stop_all_sfx()
 	if _types_legend != null:
@@ -458,9 +450,11 @@ func _cancel_all_demos(stop_board: bool = true) -> void:
 		for p in _powerup_tiles:
 			if is_instance_valid(p):
 				p.set_present(false)
-	if _score_tile != null and is_instance_valid(_score_tile):
-		_score_tile.idle()
-		_score_tile.set_present(false)
+	# Nothing to cancel on page 3 any more: the slider and the multiplier chain
+	# are both plain state the player drives directly, with no coroutine, tween
+	# or token behind either. That is also why neither is reset here - a tap
+	# elsewhere on the screen is not a reason to throw away the chain the player
+	# has been building, and the chain has its own RESET button for when it is.
 	_hide_caption()
 
 # A plain resize is a re-measure; an orientation change rebuilds, because the
@@ -484,8 +478,13 @@ func _rebuild() -> void:
 	_margin = null
 	_page_area = null
 	_track = null
-	_score_tile = null
-	_score_readout = null
+	_score_slider = null
+	_zone_bar = null
+	_score_value_label = null
+	_score_grade_label = null
+	_score_points_label = null
+	_ledger_row = null
+	_mult_label = null
 	# Every one of these holds references into the tree being freed above. A
 	# rebuild that left them populated would have the handlers below writing to
 	# freed nodes (a silent no-op) instead of the new ones - the same class of
@@ -502,6 +501,11 @@ func _rebuild() -> void:
 	_powerup_tiles.clear()
 	_powerup_buttons.clear()
 	_grade_buttons.clear()
+	# The ledger's chips are nodes in the tree being freed above, so the chain
+	# they display cannot survive an orientation flip - reset the model with
+	# them rather than leaving a multiplier on screen with no ledger behind it.
+	_chain_grades.clear()
+	_chain_mult = ScoreManager.reset_multiplier()
 	_build()
 	_apply_overscan()
 
@@ -1202,17 +1206,90 @@ func _run_practice_board_tile(tile: HelpDemoTile, start: float, token: int) -> v
 
 # --- Page 3: scoring ----------------------------------------------------------
 
+# Two live teaching tools rather than one canned demo: a slider the player
+# sweeps across zero to watch points fall off, and a chain of taps that builds
+# a multiplier the way a real run does.
+#
+# Nothing here is a re-implementation of scoring. The slider's grade comes from
+# TimerSlot.grade_for_distance(), its points from ScoreManager.base_points(),
+# and the chain's every step from ScoreManager.next_multiplier() /
+# reset_multiplier() - the same four functions the board itself runs on. All
+# read-only: this page never calls register_result(), resolve_stage() or
+# anything else that writes the real score model, so a player can sit on it for
+# ten minutes mid-session and their run state is untouched.
+
+# The FAIL overshoot shown past the MISS boundary at each end, as a fraction of
+# miss_max. Without it the bar would stop exactly where FAIL begins, which is
+# the one zone a player most needs to see the edge of.
+const SCORE_OVERSHOOT_RATIO := 0.25
+# 0.01, matching the two decimal places a timer actually displays (see
+# TimerSlot.stop_distance_for, which snaps to the same figure). A coarser step
+# would make the PERFECT window - 0.05 wide in total - unreachable except at its
+# exact endpoints.
+const SCORE_SNAP := 0.01
+const ZONE_BAR_HEIGHT := 26.0
+const ZONE_BAR_ALPHA := 0.75
+const READOUT_FONT_SIZE := 26
+# Fixed widths for the three readout fields. They change on every pixel of drag,
+# and a centred row of variable-width labels shuffles sideways as the digits
+# change - so each field reserves the width of its own widest possible value.
+const READOUT_VALUE_WIDTH := 150.0
+const READOUT_GRADE_WIDTH := 190.0
+const READOUT_POINTS_WIDTH := 170.0
+
+const LEDGER_CHIP_FONT := 16
+const LEDGER_HEIGHT := 52.0
+# Oldest chips fall off the end rather than wrapping to a second row. A ledger
+# that grows changes this page's height as the player taps, which on a page that
+# may already be scrolling would move everything under the finger mid-lesson.
+const LEDGER_MAX_CHIPS := 8
+
 func _build_page_scoring() -> Control:
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", _fs(12))
-	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.add_theme_constant_override("separation", _fs(10))
 
-	var label := Label.new()
-	label.text = "CLOSER TO 0.00 SCORES MORE"
-	label.add_theme_font_size_override("font_size", _fs(SECTION_LABEL_SIZE))
-	label.add_theme_color_override("font_color", MUTED)
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	col.add_child(label)
+	col.add_child(_section_label("CLOSER TO 0.00 SCORES MORE"))
+
+	# Zone bar and slider are deliberately adjacent with no separation: the bar
+	# is a legend FOR the track directly beneath it, and the two only read as one
+	# instrument if they touch.
+	_zone_bar = ScoreZoneBar.new()
+	_zone_bar.custom_minimum_size = Vector2(0, ZONE_BAR_HEIGHT * _s())
+	_zone_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_zone_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(_zone_bar)
+
+	_score_slider = OptionsPanel.NeonSlider.new()
+	# The touch-height variant in portrait: the track and knob keep their own
+	# dimensions and centre inside a 100-unit (60dp) tall hit box. Landscape is
+	# desktop with a mouse and keeps the compact 30.
+	_score_slider.scale_by(_s(), Layout.is_portrait())
+	_score_slider.set_range(-_score_span(), _score_span(), SCORE_SNAP)
+	# Centre, not either end - so the fill grows out from zero in whichever
+	# direction the player drags, which is the whole point being made.
+	_score_slider.fill_from = 0.0
+	_score_slider.value = 0.0
+	_score_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_score_slider.value_changed.connect(_on_score_slider_changed)
+	col.add_child(_score_slider)
+	_zone_bar.slider = _score_slider
+
+	col.add_child(_build_score_readout())
+
+	var hint := Label.new()
+	hint.text = "Drag across zero. Points fall away fast - and past the MISS edge a stop is a FAIL."
+	hint.add_theme_font_size_override("font_size", _fs(DESC_FONT_SIZE - 2))
+	hint.add_theme_color_override("font_color", MUTED)
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_child(hint)
+
+	var divider_wrap := CenterContainer.new()
+	divider_wrap.add_child(_make_divider())
+	col.add_child(divider_wrap)
+
+	col.add_child(_section_label("CONSECUTIVE STOPS BUILD A MULTIPLIER"))
 
 	var grid := GridContainer.new()
 	grid.columns = 3 if Layout.is_portrait() else 5
@@ -1226,29 +1303,118 @@ func _build_page_scoring() -> Control:
 	grid_wrap.add_child(grid)
 	col.add_child(grid_wrap)
 
-	var demo_row := HBoxContainer.new()
-	demo_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	demo_row.add_theme_constant_override("separation", _fs(24))
-	_score_tile = _make_tile(TimerData.TimerType.NORMAL, "")
-	_score_tile.interactive = false
-	demo_row.add_child(_score_tile)
-	# Nothing to demonstrate until a grade is actually tapped.
-	_score_tile.set_present(false)
+	col.add_child(_build_ledger())
 
-	_score_readout = Label.new()
-	_score_readout.add_theme_font_size_override("font_size", _fs(DESC_FONT_SIZE))
-	_score_readout.add_theme_color_override("font_color", TEXT_FILL)
-	_score_readout.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_score_readout.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_score_readout.custom_minimum_size = Vector2(300, 0) * _s()
-	demo_row.add_child(_score_readout)
+	_mult_label = Label.new()
+	_mult_label.add_theme_font_size_override("font_size", _fs(READOUT_FONT_SIZE + 6))
+	_mult_label.add_theme_color_override("font_color", GOLD)
+	_mult_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_mult_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_child(_mult_label)
 
-	var demo_wrap := CenterContainer.new()
-	demo_wrap.add_child(demo_row)
-	col.add_child(demo_wrap)
+	var reset := _button("RESET", MUTED)
+	# Same 96/64 split every BACK-class button on this screen takes - 96 raw is
+	# 144 canvas units in portrait (57.6dp), clearing the 56dp target.
+	reset.custom_minimum_size = Vector2(200, 96.0 if Layout.is_portrait() else 64.0) * _s()
+	reset.pressed.connect(_on_chain_reset)
+	var reset_wrap := CenterContainer.new()
+	reset_wrap.add_child(reset)
+	col.add_child(reset_wrap)
 
-	col.add_child(_make_desc_label(2, "Tap a grade to see it land."))
-	return col
+	_refresh_score_readout()
+	_refresh_chain()
+
+	# Scrolled, in both orientations. Measured, this page's content is taller
+	# than the viewport in portrait (see _size_page_area's note) and it is the
+	# one page with no fixed grid to preserve, so the brief's own fallback
+	# applies. A ScrollContainer also reports a near-zero minimum height, which
+	# is what keeps this page out of _size_page_area's tallest-page calculation
+	# entirely - a page 3 that measured its full content there would have
+	# inflated the shared _page_area reservation and pushed the dot row and BACK
+	# off the bottom of pages 1 and 2 as well.
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	# Otherwise a horizontal page-swipe that begins inside this page has to
+	# out-drag the scroll container's own deadzone before _input ever classifies
+	# it, which reads as the page briefly refusing to move.
+	scroll.scroll_deadzone = roundi(SWIPE_TAP_SLOP)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(col)
+	return scroll
+
+func _section_label(text: String) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", _fs(SECTION_LABEL_SIZE))
+	label.add_theme_color_override("font_color", MUTED)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return label
+
+# Half the slider's full travel: out to the MISS boundary plus a slice of FAIL
+# past it, at BOTH ends. Derived from the live threshold, never written down -
+# retuning miss_max in the Inspector rescales the slider and the zone bar
+# together the next time this screen is built.
+func _score_span() -> float:
+	return ScoreManager.miss_max * (1.0 + SCORE_OVERSHOOT_RATIO)
+
+func _build_score_readout() -> Control:
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", _fs(8))
+
+	_score_value_label = _readout_field(READOUT_VALUE_WIDTH, TEXT_FILL)
+	_score_grade_label = _readout_field(READOUT_GRADE_WIDTH, TEXT_FILL)
+	_score_points_label = _readout_field(READOUT_POINTS_WIDTH, TEXT_FILL)
+	row.add_child(_score_value_label)
+	row.add_child(_score_grade_label)
+	row.add_child(_score_points_label)
+
+	var wrap := CenterContainer.new()
+	wrap.add_child(row)
+	return wrap
+
+func _readout_field(width: float, color: Color) -> Label:
+	var label := Label.new()
+	label.add_theme_font_size_override("font_size", _fs(READOUT_FONT_SIZE))
+	label.add_theme_color_override("font_color", color)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.custom_minimum_size = Vector2(width, 0) * _s()
+	return label
+
+func _on_score_slider_changed(_v: float) -> void:
+	_refresh_score_readout()
+	if _zone_bar != null and is_instance_valid(_zone_bar):
+		_zone_bar.queue_redraw()
+
+# The three live fields. Every value here is asked of the real scoring code
+# rather than computed locally - grade_for_distance() is the board's own
+# grading entry point and base_points() is the real formula, so a retune to
+# either shows up here with no change to this function.
+func _refresh_score_readout() -> void:
+	if _score_slider == null or not is_instance_valid(_score_slider):
+		return
+	var signed_value: float = _score_slider.value
+	# Grading works on |distance| from zero; the sign only says which side of
+	# zero the stop landed on. Rounded through the same helper the board uses,
+	# so a value sitting exactly on a boundary grades the same way in both.
+	var distance: float = TimerSlot.stop_distance_for(signed_value)
+	var grade: String = TimerSlot.grade_for_distance(distance)
+	var points: int = ScoreManager.base_points(distance)
+	var color: Color = ScoreManager.grade_color(grade)
+
+	if _score_value_label != null:
+		_score_value_label.text = "%+.2f" % signed_value
+	if _score_grade_label != null:
+		_score_grade_label.text = grade
+		_score_grade_label.add_theme_color_override("font_color", color)
+	if _score_points_label != null:
+		_score_points_label.text = "%d pts" % points
+		_score_points_label.add_theme_color_override("font_color", color)
 
 func _make_grade_chip(grade: String) -> Button:
 	var color: Color = ScoreManager.grade_color(grade)
@@ -1266,63 +1432,115 @@ func _make_grade_chip(grade: String) -> Button:
 	chip.pressed.connect(_on_grade_pressed.bind(grade))
 	return chip
 
-# Points and the multiplier step are both computed from ScoreManager's own
-# static helpers rather than transcribed into a table here, so this page cannot
-# quietly disagree with real scoring if those formulas are ever retuned.
+func _build_ledger() -> Control:
+	_ledger_row = HBoxContainer.new()
+	_ledger_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_ledger_row.add_theme_constant_override("separation", _fs(6))
+	# Reserved whether or not there are any chips in it yet, so the first tap
+	# does not push the multiplier and RESET below it down the page.
+	_ledger_row.custom_minimum_size = Vector2(0, LEDGER_HEIGHT * _s())
+	_ledger_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return _ledger_row
+
+# Grade name only, in that grade's colour - no points, no per-stop delta. The
+# points half of scoring is what the slider above teaches; this half is the
+# multiplier rule on its own.
+func _make_ledger_chip(grade: String) -> Control:
+	var color: Color = ScoreManager.grade_color(grade)
+	var box := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(color.r, color.g, color.b, 0.18)
+	sb.set_corner_radius_all(8)
+	sb.set_border_width_all(2)
+	sb.border_color = color
+	sb.set_content_margin_all(roundi(6 * _s()))
+	box.add_theme_stylebox_override("panel", sb)
+	box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+
+	var label := Label.new()
+	label.text = grade
+	label.add_theme_font_size_override("font_size", _fs(LEDGER_CHIP_FONT))
+	label.add_theme_color_override("font_color", color)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	box.add_child(label)
+	return box
+
+# One tap = one stop, run through the real rule. FAIL is the one grade that
+# does not go through next_multiplier() - the real code resets outright in
+# register_result() rather than evolving, so this asks reset_multiplier() for
+# the same answer instead of writing a literal 1.0 that would ignore a retuned
+# floor.
 func _on_grade_pressed(grade: String) -> void:
 	if _swipe_active:
 		return
-	_score_token += 1
-	var token := _score_token
-	var color: Color = ScoreManager.grade_color(grade)
-	var span: Array = GRADE_RANGES[grade]
-	var dist: float = randf_range(span[0], span[1])
+	if grade == "FAIL":
+		_chain_mult = ScoreManager.reset_multiplier()
+	else:
+		_chain_mult = ScoreManager.next_multiplier(grade, _chain_mult)
+	_chain_grades.append(grade)
+	if _chain_grades.size() > LEDGER_MAX_CHIPS:
+		_chain_grades.remove_at(0)
+	_refresh_chain()
 
-	# The description states the window; the readout below states what this
-	# particular stop scored inside it.
-	var suffix := "  Ends the stage." if grade == "FAIL" else ""
-	_set_desc(2, "%s - %s%s" % [grade, _range_text(grade), suffix], color)
-
-	if _score_tile == null or not is_instance_valid(_score_tile):
+func _on_chain_reset() -> void:
+	if _swipe_active:
 		return
-	# Cleared while the timer is still running: the previous stop's points must
-	# not sit next to a digit that is currently counting toward a different one.
-	if _score_readout != null:
-		_score_readout.text = ""
-	_score_tile.set_present(true)
-	await _score_tile.play_countdown(
-		SCORE_START_FAIL if grade == "FAIL" else SCORE_START, dist)
-	if token != _score_token or not is_instance_valid(_score_tile):
-		return
+	_chain_grades.clear()
+	_chain_mult = ScoreManager.reset_multiplier()
+	_refresh_chain()
 
-	var points: int = ScoreManager.base_points(dist)
-	# next_multiplier() has no FAIL branch (it returns the multiplier unchanged),
-	# because register_result() handles that case by resetting to 1.0 outright -
-	# so FAIL is stated here rather than derived.
-	var after: float = 1.0 if grade == "FAIL" \
-		else ScoreManager.next_multiplier(grade, DEMO_BASE_MULT)
-	_score_tile.play_grade(grade, "%.2f" % dist, RESULT_HOLD_SEC * 2.0)
-	if _score_readout != null:
-		_score_readout.text = "stopped %.2f from zero\n%d points\nmultiplier  x%.1f  ->  x%.1f" \
-			% [dist, points, DEMO_BASE_MULT, after]
-		_score_readout.add_theme_color_override("font_color", color)
+func _refresh_chain() -> void:
+	if _ledger_row != null and is_instance_valid(_ledger_row):
+		for child in _ledger_row.get_children():
+			_ledger_row.remove_child(child)
+			child.queue_free()
+		for grade in _chain_grades:
+			_ledger_row.add_child(_make_ledger_chip(grade))
+	if _mult_label != null and is_instance_valid(_mult_label):
+		_mult_label.text = "x%.1f" % _chain_mult
 
-	await get_tree().create_timer(RESULT_HOLD_SEC * 2.0, true, false, true).timeout
-	if token != _score_token or _score_tile == null or not is_instance_valid(_score_tile):
-		return
-	_score_tile.set_present(false)
+# --- Zone bar -----------------------------------------------------------------
+# The coloured band strip above the slider. Draws itself from
+# ScoreManager.grade_windows() at paint time rather than from a cached band
+# list, so a threshold retuned in the Inspector is reflected the next time this
+# is drawn - there is no copy of the thresholds anywhere in here to go stale.
+#
+# Band geometry is taken from the slider it sits above (track_inset/ratio_of)
+# rather than from this control's own full width: the track is inset by the
+# knob radius at each end, so a bar drawn edge to edge would be offset from the
+# zones it is labelling by exactly that much at both ends.
+class ScoreZoneBar extends Control:
+	var slider: OptionsPanel.NeonSlider
 
-# PERFECT reads as a tolerance rather than a span (its lower bound is a dead-on
-# 0.00, which "0.00 to 0.05" makes look like a range you have to land inside
-# rather than the target itself), and FAIL is genuinely open-ended above MISS_MAX.
-func _range_text(grade: String) -> String:
-	var span: Array = GRADE_RANGES[grade]
-	match grade:
-		"PERFECT":
-			return "within %.2f of zero." % float(span[1])
-		"FAIL":
-			return "more than %.2f from zero." % float(span[0])
-	return "%.2f to %.2f from zero." % [float(span[0]), float(span[1])]
+	func _draw() -> void:
+		if slider == null or not is_instance_valid(slider):
+			return
+		var inset: float = slider.track_inset()
+		var usable: float = size.x - inset * 2.0
+		if usable <= 0.0:
+			return
+
+		var lo: float = 0.0
+		for window in ScoreManager.grade_windows():
+			_band(lo, window["max"], window["grade"], inset, usable)
+			lo = window["max"]
+		# The overshoot: everything past the MISS boundary out to the end of the
+		# slider's own range, which is FAIL territory on both sides.
+		_band(lo, slider.max_value, "FAIL", inset, usable)
+
+		# Zero tick, drawn last so it sits over the bands it divides.
+		var mid: float = inset + slider.ratio_of(0.0) * usable
+		draw_rect(Rect2(mid - 1.0, 0.0, 2.0, size.y), Color(1, 1, 1, 0.85), true)
+
+	# One tier, mirrored either side of zero.
+	func _band(from: float, to: float, grade: String, inset: float, usable: float) -> void:
+		var color: Color = ScoreManager.grade_color(grade)
+		color.a = HelpScreen.ZONE_BAR_ALPHA
+		for sign_mult in [1.0, -1.0]:
+			var a: float = inset + slider.ratio_of(from * sign_mult) * usable
+			var b: float = inset + slider.ratio_of(to * sign_mult) * usable
+			draw_rect(Rect2(minf(a, b), 0.0, absf(b - a), size.y), color, true)
 
 # --- Shared builders ----------------------------------------------------------
 
@@ -1518,6 +1736,9 @@ func _begin_drag(pos: Vector2) -> void:
 	_drag_from = pos
 	_dragging = true
 	_swipe_active = false
+	_slider_grabbed = _page_index == 2 and _score_slider != null \
+		and is_instance_valid(_score_slider) \
+		and _score_slider.get_global_rect().has_point(pos)
 	_set_suppress_taps(false)
 	if _types_legend != null:
 		_types_legend.block_taps = false
@@ -1534,7 +1755,7 @@ func _set_suppress_taps(on: bool) -> void:
 			t.suppress_taps = on
 
 func _update_drag(pos: Vector2) -> void:
-	if not _dragging:
+	if not _dragging or _slider_grabbed:
 		return
 	var dx: float = pos.x - _drag_from.x
 	if absf(dx) > SWIPE_TAP_SLOP:
@@ -1581,6 +1802,12 @@ func _end_drag(pos: Vector2) -> void:
 	if not _dragging:
 		return
 	_dragging = false
+	# The slider owns this whole gesture: no page change, and no tap-anywhere
+	# cancel either - a drag that ends on the knob is the player setting a
+	# value, not dismissing anything.
+	if _slider_grabbed:
+		_slider_grabbed = false
+		return
 	if not _swipe_active:
 		# A plain tap, not a swipe - anywhere on the screen. This runs in
 		# _input(), ahead of whatever Control is actually under the finger (a

@@ -1,11 +1,16 @@
 extends Panel
 class_name TimerSlot
 
-# Grade windows by absolute distance from true 0.00.
-const PERFECT_MAX := 0.05
-const GOOD_MAX := 0.30
-const OKAY_MAX := 0.50
-const MISS_MAX := 1.00       # beyond this a manual stop is a FAIL (ends the stage)
+# Grade windows by absolute distance from true 0.00 used to be four consts here.
+# They are @export vars on ScoreManager now (perfect_max/good_max/okay_max/
+# miss_max) so a designer can retune them from the Inspector - see the export
+# block there. Deliberately MOVED rather than mirrored: leaving a const copy
+# behind would mean the Inspector retuned the Help screen's zone bar while the
+# board carried on grading by the old numbers.
+#
+# EXPIRE_THRESHOLD stays here and stays a const - it is not a grade window but a
+# timer-lifecycle bound (how far past zero a slot runs before it gives up), and
+# it belongs to the slot rather than to scoring.
 const EXPIRE_THRESHOLD := -1.00
 
 # Neon accent per timer type. The panel fill is a very dark tint of this, with
@@ -586,7 +591,7 @@ func _resolve_stop(forced_grade: String, from_click: bool) -> void:
 	# force_resolve() or an expiry's own forced grade.
 	if from_click and forced_grade == "" and OS.is_debug_build() and Settings.dev_force_grade != "":
 		grade = Settings.dev_force_grade
-		distance = 0.0 if grade == "PERFECT" else GOOD_MAX
+		distance = 0.0 if grade == "PERFECT" else ScoreManager.good_max
 
 	# Shield downgrades the first FAIL inside its window to a MISS. Filtering
 	# here - ahead of the flash, the grade sign and the EventBus emit - means the
@@ -756,17 +761,16 @@ func _play_shine() -> void:
 # _grade_for_distance() below does.
 #
 # <= at every tier: the upper bound belongs to the stricter grade, so an
-# exact 0.05 is PERFECT, not GOOD; an exact 0.30 is GOOD, not OKAY; etc.
+# exact 0.05 is PERFECT, not GOOD; an exact 0.30 is GOOD, not OKAY; etc. That
+# rule, and the four windows it compares against, now live on ScoreManager -
+# this stays the entry point every caller already uses, and delegates.
+#
+# Reaching an autoload from a `static func` is legal in GDScript (verified
+# headlessly on 4.7.1, not assumed) - which is what let the windows move to an
+# Inspector-editable autoload without forcing every static caller of this to
+# become an instance call.
 static func grade_for_distance(distance: float) -> String:
-	if distance <= PERFECT_MAX:
-		return "PERFECT"
-	elif distance <= GOOD_MAX:
-		return "GOOD"
-	elif distance <= OKAY_MAX:
-		return "OKAY"
-	elif distance <= MISS_MAX:
-		return "MISS"
-	return "FAIL"  # too early / too late - StageController ends the stage
+	return ScoreManager.grade_for(distance)
 
 # Rounded to the same 2 decimal places the digit display shows - see
 # _stop_distance()'s own comment for why that rounding is load-bearing rather

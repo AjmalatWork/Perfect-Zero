@@ -5,7 +5,61 @@ signal tally_changed(stage_tally: int, multiplier: float)  # live segment (Endle
 signal campaign_total_changed(total: int)                  # live running total (Endless HUD)
 signal perfect_streak_changed(count: int)                  # consecutive PERFECTs (any other grade breaks it)
 
-const MULT_FLOOR := 1.0
+# --- Designer-tunable scoring balance -----------------------------------------
+# Every number the scoring rules actually run on lives here as an @export, so
+# balance can be retuned from the Inspector (on scenes/ScoreManager.tscn, which
+# is why this autoload is scene-based rather than script-based - a script
+# autoload has no Inspector surface at all; same reason AudioManager and
+# Powerups are scenes).
+#
+# These are the single definition, not a mirror of one. The grade windows in
+# particular used to be `const`s on TimerSlot, which is where the board graded
+# from - so exporting a second copy here would have produced exactly the failure
+# this is meant to prevent: a designer drags perfect_max to 0.08, the Help
+# screen's zone bar redraws, and the board keeps grading at 0.05. TimerSlot
+# reads these now (see its grade_for_distance), so there is one value and it is
+# the one the game plays by.
+@export_group("Grade windows")
+## Maximum |distance| from 0.00 that still grades PERFECT.
+@export var perfect_max: float = 0.05
+## Maximum |distance| that still grades GOOD.
+@export var good_max: float = 0.30
+## Maximum |distance| that still grades OKAY.
+@export var okay_max: float = 0.50
+## Maximum |distance| that still grades MISS. Beyond this a manual stop is a
+## FAIL, which ends the stage.
+@export var miss_max: float = 1.00
+
+@export_group("Base points")
+## Points awarded for a dead-on 0.00 stop, before any bonus or multiplier.
+@export var points_at_zero: float = 200.0
+## Curve shape of the falloff. 1.0 is linear; 2.0 back-loads the reward heavily
+## toward the last fraction of a second, which is the whole game.
+@export var points_falloff_exponent: float = 2.0
+## The |distance| at which a stop is worth nothing at all.
+@export var points_zero_distance: float = 1.0
+
+@export_group("Multiplier")
+## Added to the multiplier by a PERFECT.
+@export var mult_perfect_delta: float = 1.0
+## Added to the multiplier by a GOOD.
+@export var mult_good_delta: float = 0.5
+## Added to the multiplier by an OKAY. Zero by design - OKAY holds the chain
+## without growing it.
+@export var mult_okay_delta: float = 0.0
+## The multiplier is scaled by this on a MISS, then floored.
+@export var mult_miss_factor: float = 0.5
+## The multiplier never drops below this, and resets to it on a FAIL.
+@export var mult_floor: float = 1.0
+
+@export_group("Bonus factors")
+## Score factor for a PERFECT on a Golden timer.
+@export var bonus_golden_perfect: float = 2.0
+## Score factor for any scoring grade on a Blackout timer.
+@export var bonus_blackout: float = 2.5
+## Added to the Red-stack factor per speed-boost stack.
+@export var bonus_red_stack_step: float = 0.25
+@export_group("")
 
 # Colors for the floating grade signs (above timers on stop, and over the reveal).
 const GRADE_COLORS := {
@@ -58,24 +112,74 @@ static func thousands(n: int) -> String:
 			out = "," + out
 	return ("-" + out) if n < 0 else out
 
-# Continuous proximity base points: full 200 at distance 0, quadratic falloff to
-# 0 as distance approaches 1.0. No cliff between grade tiers.
-static func base_points(distance: float) -> int:
-	return int(200.0 * pow(1.0 - minf(distance, 1.0), 2.0))
+# Continuous proximity base points: full points_at_zero at distance 0, falling
+# off to 0 as distance approaches points_zero_distance. No cliff between grade
+# tiers.
+#
+# Instance methods rather than the statics these were, so they can read the
+# exports above - every call site already goes through the autoload
+# (`ScoreManager.base_points(...)`), so nothing changed at any of them.
+#
+# absf() is new and load-bearing now that the exponent is tunable: a signed
+# distance would give pow() a negative base, and a negative base with a
+# non-integer exponent is NaN. Every existing caller already passes a
+# TimerSlot.stop_distance_for() result (absolute by construction), so this only
+# hardens the new Help-screen path, which sweeps a SIGNED value across zero.
+func base_points(distance: float) -> int:
+	var d: float = minf(absf(distance), points_zero_distance)
+	var t: float = 1.0 - d / maxf(points_zero_distance, 0.0001)
+	return int(points_at_zero * pow(t, points_falloff_exponent))
 
-# Multiplier evolution for one grade. PERFECT +1.0, GOOD +0.5, OKAY unchanged,
-# MISS halves (floored at 1.0). Caller clamps to any active cap.
-static func next_multiplier(grade: String, m: float) -> float:
+# Multiplier evolution for one grade. PERFECT and GOOD add, OKAY holds, MISS
+# scales down and floors. Caller clamps to any active cap.
+#
+# FAIL deliberately has no branch: register_result() resets the multiplier to
+# the floor outright rather than evolving it, so returning `m` unchanged here is
+# the honest answer for "what does this rule do to the multiplier" - callers
+# that need FAIL's real behaviour use reset_multiplier() below.
+func next_multiplier(grade: String, m: float) -> float:
 	match grade:
 		"PERFECT":
-			return m + 1.0
+			return m + mult_perfect_delta
 		"GOOD":
-			return m + 0.5
+			return m + mult_good_delta
 		"OKAY":
-			return m
+			return m + mult_okay_delta
 		"MISS":
-			return maxf(m * 0.5, MULT_FLOOR)
+			return maxf(m * mult_miss_factor, mult_floor)
 	return m
+
+# What a FAIL does to the multiplier. Extracted so the two places that need to
+# state it (register_result()/resolve_stage()'s reset, and the Help screen's
+# multiplier chain) share one answer instead of both writing a literal 1.0 that
+# would quietly ignore a retuned mult_floor.
+func reset_multiplier() -> float:
+	return mult_floor
+
+# The grade a given |distance| earns, read off the same exported windows the
+# board grades by. TimerSlot.grade_for_distance() delegates here.
+func grade_for(distance: float) -> String:
+	var d := absf(distance)
+	if d <= perfect_max:
+		return "PERFECT"
+	elif d <= good_max:
+		return "GOOD"
+	elif d <= okay_max:
+		return "OKAY"
+	elif d <= miss_max:
+		return "MISS"
+	return "FAIL"
+
+# The four windows in ascending order, as {grade, max} - so anything that needs
+# to walk the tiers (the Help screen's zone bar) does it from the live values in
+# tier order rather than transcribing four names and four thresholds.
+func grade_windows() -> Array:
+	return [
+		{"grade": "PERFECT", "max": perfect_max},
+		{"grade": "GOOD", "max": good_max},
+		{"grade": "OKAY", "max": okay_max},
+		{"grade": "MISS", "max": miss_max},
+	]
 
 # Replay a cleared stage's stops for the reveal. Each result is
 # {grade, distance, bonus_factor}. Points scale continuously with distance and
@@ -83,7 +187,7 @@ static func next_multiplier(grade: String, m: float) -> float:
 func evaluate_stage(results: Array) -> Dictionary:
 	var steps: Array = []
 	var tally: int = 0
-	var m: float = 1.0
+	var m: float = mult_floor
 	for r in results:
 		var grade: String = r["grade"]
 		var dist: float = r["distance"]
@@ -120,7 +224,7 @@ func set_score(new_score: int, new_mult: float) -> void:
 
 func reset() -> void:
 	score = 0
-	multiplier = 1.0
+	multiplier = reset_multiplier()
 	score_changed.emit(score, multiplier)
 
 # --- Live segment scoring (Endless) --------------------------------------
@@ -166,7 +270,7 @@ func resolve_stage(cleared: bool) -> int:
 		campaign_total += banked
 		campaign_total_changed.emit(campaign_total)
 	stage_tally = 0
-	multiplier = 1.0
+	multiplier = reset_multiplier()
 	tally_changed.emit(stage_tally, multiplier)
 	return banked
 
@@ -174,7 +278,7 @@ func resolve_stage(cleared: bool) -> int:
 # campaign run, for cross-mode hygiene).
 func reset_run() -> void:
 	stage_tally = 0
-	multiplier = 1.0
+	multiplier = reset_multiplier()
 	campaign_total = 0
 	perfect_streak = 0
 	run_best_streak = 0

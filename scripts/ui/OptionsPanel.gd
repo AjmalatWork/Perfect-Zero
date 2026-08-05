@@ -698,14 +698,57 @@ class NeonSlider extends Control:
 
 	signal value_changed(v: float)
 
+	# Range, snap and fill origin are configurable so the Help screen's signed
+	# distance slider can be THIS control rather than a second slider class that
+	# would have to be kept looking like this one by hand. The defaults are
+	# exactly the old hardcoded behaviour (0..1, 0.05 steps, filling from the
+	# left end), so both Options sliders are untouched by this.
+	var min_value: float = 0.0
+	var max_value: float = 1.0
+	var snap_step: float = 0.05
+	# The value the filled portion of the track is drawn FROM. Left at min_value
+	# this is "fill from the left", which is what a volume slider wants; set to
+	# 0.0 on a slider whose range straddles zero it becomes "fill from the
+	# centre outward", which is what reading a signed distance wants.
+	var fill_from: float = 0.0
+
 	var value: float = 1.0:
 		set(v):
-			value = clampf(v, 0.0, 1.0)
+			value = clampf(v, min_value, max_value)
 			queue_redraw()
 
 	var _dragging: bool = false
 	var _scale: float = 1.0
 	var _height: float = SIZE.y
+
+	# Called before the value is ever set, so the clamp in the setter above is
+	# already working against the real range.
+	func set_range(lo: float, hi: float, step: float) -> void:
+		min_value = lo
+		max_value = hi
+		snap_step = step
+		value = clampf(value, lo, hi)
+
+	# --- Track geometry, exposed ----------------------------------------------
+	# A zone bar drawn ABOVE this slider has to line its bands up with the track
+	# underneath, and the track is inset by the knob radius at both ends so the
+	# knob never overhangs. Anything that needs to agree with the track's
+	# geometry asks for it here instead of re-deriving KNOB_RADIUS * _scale and
+	# silently drifting the first time the knob is resized.
+	func track_inset() -> float:
+		return KNOB_RADIUS * _scale
+
+	# Where a given value sits, as a 0..1 fraction of the usable track.
+	func ratio_of(v: float) -> float:
+		var span: float = max_value - min_value
+		if absf(span) < 0.0001:
+			return 0.0
+		return clampf((v - min_value) / span, 0.0, 1.0)
+
+	# Where a given value sits, in this control's own x coordinates.
+	func track_x(v: float) -> float:
+		var inset := track_inset()
+		return lerpf(inset, size.x - inset, ratio_of(v))
 
 	# SIZE.x is only a minimum now - the single-column layout stretches this to the
 	# full content width, and both _draw and _set_from_x read `size` so the track,
@@ -736,17 +779,18 @@ class NeonSlider extends Control:
 			_set_from_x(event.position.x)
 			accept_event()
 		elif event.is_action_pressed("ui_left") and has_focus():
-			_set_value(value - 0.05)
+			_set_value(value - snap_step)
 		elif event.is_action_pressed("ui_right") and has_focus():
-			_set_value(value + 0.05)
+			_set_value(value + snap_step)
 
 	func _set_from_x(x: float) -> void:
 		var knob := KNOB_RADIUS * _scale
 		var usable := size.x - knob * 2.0
-		_set_value((x - knob) / maxf(usable, 0.0001))
+		var t: float = (x - knob) / maxf(usable, 0.0001)
+		_set_value(lerpf(min_value, max_value, t))
 
 	func _set_value(v: float) -> void:
-		var snapped := snappedf(clampf(v, 0.0, 1.0), 0.05)
+		var snapped := snappedf(clampf(v, min_value, max_value), snap_step)
 		if is_equal_approx(snapped, value):
 			return
 		value = snapped
@@ -758,14 +802,19 @@ class NeonSlider extends Control:
 		var y := _height * _scale * 0.5
 		var x0 := knob
 		var x1 := size.x - knob
-		var knob_x := lerpf(x0, x1, value)
+		var knob_x := lerpf(x0, x1, ratio_of(value))
+		# Where the fill starts. Identical to x0 for a 0..1 slider filling from
+		# min_value; the centre of the track for a signed one.
+		var fill_x := lerpf(x0, x1, ratio_of(fill_from))
 
 		# Empty track, always visible regardless of value.
 		draw_rect(Rect2(x0, y - track * 0.5, x1 - x0, track),
 			Color(1, 1, 1, 0.08), true)
-		# Filled portion up to the current value.
-		if knob_x > x0:
-			draw_rect(Rect2(x0, y - track * 0.5, knob_x - x0, track), ACCENT, true)
+		# Filled portion, from the fill origin to the current value - drawn from
+		# whichever of the two is smaller, so it works in both directions.
+		if absf(knob_x - fill_x) > 0.5:
+			draw_rect(Rect2(minf(fill_x, knob_x), y - track * 0.5,
+				absf(knob_x - fill_x), track), ACCENT, true)
 
 		# Glowing knob: a soft wide translucent disc under a solid bright one,
 		# the same "shadow reads as neon glow" trick used on the timer panels.
