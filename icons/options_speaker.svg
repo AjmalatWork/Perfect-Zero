@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+<!--speaker cone plus two sound-wave arcs, same house style as icons/title_*.svg -
+    translucent accent fill/stroke pass then a bold solid pass, no <text>
+    elements and no feGaussianBlur/feMerge filter (thorvg does not composite
+    those into a soft halo - it blurs the whole shape instead).-->
+  <path d="M60,104 L100,104 L162,58 L162,198 L100,152 L60,152 Z"
+        fill="#22d3ff" fill-opacity="0.16"/>
+  <path d="M60,104 L100,104 L162,58 L162,198 L100,152 L60,152 Z"
+        fill="none" stroke="#22d3ff" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M188,92 A42,36 0 0,1 188,164" fill="none" stroke="#22d3ff"
+        stroke-width="12" stroke-linecap="round"/>
+  <path d="M188,64 A72,64 0 0,1 188,192" fill="none" stroke="#22d3ff"
+        stroke-width="12" stroke-linecap="round"/>
+</svg>

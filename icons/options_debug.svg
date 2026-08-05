@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+<!--bug glyph for the debug-only grade override. Deliberately flat: a single
+    muted-grey stroke pass with no translucent glow underlay, unlike every
+    other icon in this folder - the point is for it to read as plain
+    diagnostic machinery rather than a polished feature. Still no <text> and
+    no feGaussianBlur/feMerge filter, same thorvg constraints as the rest of
+    icons/.-->
+  <ellipse cx="128" cy="140" rx="46" ry="60" fill="none" stroke="#8b90a8" stroke-width="12"/>
+  <path d="M128,80 L128,200" fill="none" stroke="#8b90a8" stroke-width="8"/>
+  <path d="M84,110 L44,90 M172,110 L212,90 M80,140 L34,140 M176,140 L222,140 M84,172 L44,196 M172,172 L212,196"
+        fill="none" stroke="#8b90a8" stroke-width="8" stroke-linecap="round"/>
+  <path d="M112,80 L96,48 M144,80 L160,48" fill="none" stroke="#8b90a8" stroke-width="8" stroke-linecap="round"/>
+</svg>

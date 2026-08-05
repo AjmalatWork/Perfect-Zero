@@ -200,6 +200,87 @@ func force_unduck_music() -> void:
 func is_music_ducked() -> bool:
 	return _music_duck_count > 0
 
+# --- Options screen: audible live feedback -----------------------------------
+# The SFX/Music sliders already apply their bus volume continuously while being
+# dragged (Settings.set_volume()/set_music_volume() are wired straight to
+# NeonSlider.value_changed, which fires on every snapped step of a drag, not
+# just on release) - so the gap isn't "when" the value applies, it's that
+# there's nothing actually SOUNDING on either bus during a drag for that live
+# change to be heard against. These two give each slider something to hear.
+
+# Debounced rather than fired on every value_changed - a fast drag crosses many
+# 0.05 steps a second, and a tick per step would be a stutter, not feedback.
+const UI_TICK_MIN_INTERVAL_SEC := 0.09
+var _last_ui_tick_sec: float = -1000.0
+
+func play_volume_preview_tick() -> void:
+	var now: float = Time.get_ticks_msec() / 1000.0
+	if now - _last_ui_tick_sec < UI_TICK_MIN_INTERVAL_SEC:
+		return
+	_last_ui_tick_sec = now
+	# A short, plain blip - reuses the same punchy-synth path every other SFX in
+	# this file goes through, at BUS_SFX, so it's driven by the exact bus volume
+	# Settings.set_volume() just set.
+	_play(_get_punchy([880.0], 0.07, 0.3, 7.0, 0.2), 1.0, 0.0)
+
+# How long a music preview keeps playing after the last drag update before
+# fading back out - long enough that a brief mid-drag pause (finger lifts
+# between two small adjustments) doesn't audibly stutter the preview off and
+# back on.
+const MUSIC_PREVIEW_HOLD_SEC := 1.0
+var _music_preview_timer: Timer
+var _music_preview_active: bool = false
+
+# Standalone Options (opened from Title) already has the menu track playing -
+# _music_wanted_for() includes GameState.OPTIONS - so Settings.set_music_volume()
+# dragging is already audible there with no extra code. The gap is the Pause
+# Menu's Options overlay: gameplay deliberately keeps this bus silent (see
+# _music_wanted_for's own comment - "the ticks are the game"), so there is
+# nothing playing to preview by default. This starts one, entirely separate
+# from _music_wanted_for's own persistent playback decision, so it can never
+# leave real menu music playing behind once the player resumes.
+func preview_music_volume(_level: float) -> void:
+	if _menu_music == null or not _audio_unlocked:
+		return
+	if _menu_music.playing:
+		return
+	if not _music_preview_active:
+		_music_preview_active = true
+		_menu_music.volume_db = linear_to_db(MENU_MUSIC_BASE_LINEAR)
+		_menu_music.play(menu_music_first_play_start_sec)
+	if _music_preview_timer == null:
+		_music_preview_timer = Timer.new()
+		_music_preview_timer.one_shot = true
+		# The pause overlay this exists for is reached with the tree paused.
+		_music_preview_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+		_music_preview_timer.timeout.connect(_end_music_preview)
+		add_child(_music_preview_timer)
+	_music_preview_timer.start(MUSIC_PREVIEW_HOLD_SEC)
+
+# Lets the Options screen end a preview immediately (BACK/closed) rather than
+# leaving it to fade out over its own hold window after the panel is gone -
+# harmless either way since this preview is owned by AudioManager, not by the
+# panel, but there's no reason to let it linger once nobody's dragging.
+func cancel_music_preview() -> void:
+	if _music_preview_timer != null:
+		_music_preview_timer.stop()
+	_end_music_preview()
+
+func _end_music_preview() -> void:
+	if not _music_preview_active:
+		return
+	_music_preview_active = false
+	# If the real state-driven logic wants the track playing NOW - the player
+	# backed all the way out to a menu state while this preview was still
+	# running - leave it alone rather than cutting it off out from under
+	# _update_menu_music, which owns it from here.
+	if _music_wanted_for(GameManager.current_state):
+		return
+	var tween := create_tween()
+	tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	tween.tween_property(_menu_music, "volume_db", SILENT_DB, MENU_MUSIC_FADE)
+	tween.tween_callback(_menu_music.stop)
+
 # Called here whenever ducking changes, and by Settings whenever the Music
 # slider moves - so neither owner can clobber the other's reason for wanting
 # the bus muted.
